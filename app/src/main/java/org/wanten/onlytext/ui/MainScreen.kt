@@ -21,14 +21,17 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.util.lerp
+import androidx.compose.ui.zIndex
 import org.wanten.onlytext.ui.components.AppDrawer
 import org.wanten.onlytext.ui.components.EditorContent
 import kotlin.math.absoluteValue
 
 @Composable
 fun MainScreen() {
-    // 4 pages: [Sidebar1, Editor1, Editor2, Sidebar2]
-    val pagerState = rememberPagerState(initialPage = 1) { 4 }
+    val actualPageCount = 4
+    val centerOffset = 500 * actualPageCount
+    val pagerState = rememberPagerState(initialPage = centerOffset + 1) { centerOffset * 2 }
+    
     var text1 by remember { mutableStateOf("") }
     var text2 by remember { mutableStateOf("") }
     
@@ -37,11 +40,23 @@ fun MainScreen() {
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
-    // Handle focus and keyboard when switching pages
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }.collect { _ ->
             keyboardController?.hide()
             focusManager.clearFocus()
+        }
+    }
+
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.isScrollInProgress }.collect { isScrolling ->
+            if (!isScrolling) {
+                val current = pagerState.currentPage
+                val actual = (current % actualPageCount + actualPageCount) % actualPageCount
+                val target = centerOffset + actual
+                if ((current - target).absoluteValue >= 100) {
+                    pagerState.scrollToPage(target)
+                }
+            }
         }
     }
 
@@ -54,23 +69,34 @@ fun MainScreen() {
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background),
         ) { page ->
+            val actualPage = (page % actualPageCount + actualPageCount) % actualPageCount
+            val isSidebar = actualPage == 0 || actualPage == 3
+            val isEditor = actualPage == 1 || actualPage == 2
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .zIndex(if (isSidebar) 1f else 0f)
                     .graphicsLayer {
-                        // Calculate the absolute offset for the current page
-                        val pageOffset = (
-                            (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
-                        ).absoluteValue
+                        val pagePosition = page - (pagerState.currentPage + pagerState.currentPageOffsetFraction)
                         
-                        alpha = lerp(
-                            start = 0.6f,
-                            stop = 1f,
-                            fraction = 1f - pageOffset.coerceIn(0f, 1f)
-                        )
+                        if (isEditor) {
+                            if (actualPage == 1 && pagePosition > 0 && pagePosition <= 1) {
+                                translationX = -pagePosition * size.width
+                            } else if (actualPage == 2 && pagePosition < 0 && pagePosition >= -1) {
+                                translationX = -pagePosition * size.width
+                            }
+                            
+                            val dimAmount = if (actualPage == 1) {
+                                pagePosition.coerceIn(0f, 1f)
+                            } else {
+                                (-pagePosition).coerceIn(0f, 1f)
+                            }
+                            alpha = lerp(1f, 0.5f, dimAmount)
+                        }
                     }
             ) {
-                when (page) {
+                when (actualPage) {
                     0 -> AppDrawer(
                         modifier = Modifier.padding(innerPadding),
                         title = "Sidebar 1",
