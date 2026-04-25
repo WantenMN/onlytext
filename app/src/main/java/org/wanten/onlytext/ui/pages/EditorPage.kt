@@ -1,4 +1,4 @@
-package org.wanten.onlytext.ui.components
+package org.wanten.onlytext.ui.pages
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,7 +13,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 
 @Composable
-fun EditorContent(
+fun EditorPage(
     text: String,
     onTextChange: (String) -> Unit,
     innerPadding: PaddingValues,

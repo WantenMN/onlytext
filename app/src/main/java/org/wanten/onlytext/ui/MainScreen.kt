@@ -10,36 +10,29 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
-import org.wanten.onlytext.ui.components.AppDrawer
-import org.wanten.onlytext.ui.components.EditorContent
+import org.wanten.onlytext.ui.pages.EditorPage
+import org.wanten.onlytext.ui.pages.SidebarPage
+import org.wanten.onlytext.ui.state.rememberMainScreenState
+import org.wanten.onlytext.ui.utils.editorPageTransformer
 import kotlin.math.absoluteValue
 
 @Composable
 fun MainScreen() {
+    val state = rememberMainScreenState()
+    
     val actualPageCount = 4
     val centerOffset = 500 * actualPageCount
     val pagerState = rememberPagerState(initialPage = centerOffset + 1) { centerOffset * 2 }
     
-    var text1 by remember { mutableStateOf("") }
-    var text2 by remember { mutableStateOf("") }
-    
-    val focusRequester1 = remember { FocusRequester() }
-    val focusRequester2 = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
+    // Hide keyboard and clear focus on page change
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }.collect { _ ->
             keyboardController?.hide()
@@ -47,6 +40,7 @@ fun MainScreen() {
         }
     }
 
+    // Infinite scroll logic
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.isScrollInProgress }.collect { isScrolling ->
             if (!isScrolling) {
@@ -71,51 +65,33 @@ fun MainScreen() {
         ) { page ->
             val actualPage = (page % actualPageCount + actualPageCount) % actualPageCount
             val isSidebar = actualPage == 0 || actualPage == 3
-            val isEditor = actualPage == 1 || actualPage == 2
 
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(if (isSidebar) 1f else 0f)
-                    .graphicsLayer {
-                        val pagePosition = page - (pagerState.currentPage + pagerState.currentPageOffsetFraction)
-                        
-                        if (isEditor) {
-                            if (actualPage == 1 && pagePosition > 0 && pagePosition <= 1) {
-                                translationX = -pagePosition * size.width
-                            } else if (actualPage == 2 && pagePosition < 0 && pagePosition >= -1) {
-                                translationX = -pagePosition * size.width
-                            }
-                            
-                            val dimAmount = if (actualPage == 1) {
-                                pagePosition.coerceIn(0f, 1f)
-                            } else {
-                                (-pagePosition).coerceIn(0f, 1f)
-                            }
-                            alpha = lerp(1f, 0.5f, dimAmount)
-                        }
-                    }
+                    .editorPageTransformer(page, pagerState, actualPage)
             ) {
                 when (actualPage) {
-                    0 -> AppDrawer(
+                    0 -> SidebarPage(
                         modifier = Modifier.padding(innerPadding),
-                        title = "Sidebar 1",
+                        title = "Left Sidebar",
                     )
-                    1 -> EditorContent(
-                        text = text1,
-                        onTextChange = { text1 = it },
+                    1 -> EditorPage(
+                        text = state.leftNoteContent,
+                        onTextChange = { state.leftNoteContent = it },
                         innerPadding = innerPadding,
-                        focusRequester = focusRequester1
+                        focusRequester = state.leftFocusRequester
                     )
-                    2 -> EditorContent(
-                        text = text2,
-                        onTextChange = { text2 = it },
+                    2 -> EditorPage(
+                        text = state.rightNoteContent,
+                        onTextChange = { state.rightNoteContent = it },
                         innerPadding = innerPadding,
-                        focusRequester = focusRequester2
+                        focusRequester = state.rightFocusRequester
                     )
-                    3 -> AppDrawer(
+                    3 -> SidebarPage(
                         modifier = Modifier.padding(innerPadding),
-                        title = "Sidebar 2",
+                        title = "Right Sidebar",
                     )
                 }
             }

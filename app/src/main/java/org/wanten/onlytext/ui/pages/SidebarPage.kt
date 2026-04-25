@@ -1,4 +1,4 @@
-package org.wanten.onlytext.ui.components
+package org.wanten.onlytext.ui.pages
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,9 +14,9 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun AppDrawer(
-    title: String = "OnlyText",
-    modifier: Modifier = Modifier
+fun SidebarPage(
+    modifier: Modifier = Modifier,
+    title: String = "OnlyText"
 ) {
     Box(
         modifier = modifier.fillMaxSize(),
