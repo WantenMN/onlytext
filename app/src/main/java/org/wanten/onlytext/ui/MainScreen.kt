@@ -15,10 +15,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.util.lerp
 import org.wanten.onlytext.ui.components.AppDrawer
@@ -28,30 +28,20 @@ import kotlin.math.absoluteValue
 @Composable
 fun MainScreen() {
     // 4 pages: [Sidebar1, Editor1, Editor2, Sidebar2]
-    val pagerState = rememberPagerState(initialPage = 1, pageCount = { 4 })
+    val pagerState = rememberPagerState(initialPage = 1) { 4 }
     var text1 by remember { mutableStateOf("") }
     var text2 by remember { mutableStateOf("") }
     
     val focusRequester1 = remember { FocusRequester() }
     val focusRequester2 = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     // Handle focus and keyboard when switching pages
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.currentPage }.collect { page ->
-            when (page) {
-                1 -> {
-                    focusRequester1.requestFocus()
-                    keyboardController?.show()
-                }
-                2 -> {
-                    focusRequester2.requestFocus()
-                    keyboardController?.show()
-                }
-                0, 3 -> {
-                    keyboardController?.hide()
-                }
-            }
+        snapshotFlow { pagerState.currentPage }.collect { _ ->
+            keyboardController?.hide()
+            focusManager.clearFocus()
         }
     }
 
@@ -84,7 +74,6 @@ fun MainScreen() {
                     0 -> AppDrawer(
                         modifier = Modifier.padding(innerPadding),
                         title = "Sidebar 1",
-                        contentAlignment = Alignment.CenterStart
                     )
                     1 -> EditorContent(
                         text = text1,
@@ -101,7 +90,6 @@ fun MainScreen() {
                     3 -> AppDrawer(
                         modifier = Modifier.padding(innerPadding),
                         title = "Sidebar 2",
-                        contentAlignment = Alignment.CenterEnd
                     )
                 }
             }
