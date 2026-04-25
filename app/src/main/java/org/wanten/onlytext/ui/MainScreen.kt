@@ -33,6 +33,9 @@ import org.wanten.onlytext.ui.state.rememberMainScreenState
 import org.wanten.onlytext.ui.utils.editorPageTransformer
 import kotlin.math.abs
 import kotlin.math.absoluteValue
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.roundToInt
 
 @Composable
 fun MainScreen() {
@@ -204,7 +207,9 @@ fun Modifier.twoFingerVerticalScroll(
                 var isVerticalIntent: Boolean? = null
                 var totalDragX = 0f
                 var totalDragY = 0f
+                var netDragY = 0f
                 val touchSlop = 10f // Threshold to determine direction
+                val startTime = System.currentTimeMillis()
 
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -213,6 +218,7 @@ fun Modifier.twoFingerVerticalScroll(
 
                     val dragDeltaX = changes.map { it.positionChange().x }.sum()
                     val dragDeltaY = changes.map { it.positionChange().y }.sum()
+                    netDragY += dragDeltaY
 
                     if (isVerticalIntent == null) {
                         totalDragX += abs(dragDeltaX)
@@ -222,26 +228,38 @@ fun Modifier.twoFingerVerticalScroll(
                         }
                     }
 
-                    if (isVerticalIntent == true) {
-                        // Locked to vertical: consume all changes to prevent horizontal pager from moving
-                        if (changes.size >= 2) {
+                    when (isVerticalIntent) {
+                        true -> {
+                            // Locked to vertical: consume all changes and drive scroll
                             val avgDeltaY = changes.map { it.positionChange().y }.average().toFloat()
                             val sensitivity = 3.0f
                             pagerState.dispatchRawDelta(-avgDeltaY * sensitivity)
+                            changes.forEach { it.consume() }
                         }
-                        changes.forEach { it.consume() }
-                    } else if (isVerticalIntent == false) {
-                        // Locked to horizontal: let it pass to HorizontalPager
-                        // Do not consume, allowing the system to handle the swipe
-                    } else {
-                        // Determining intent: consume for now to stay still
-                        changes.forEach { it.consume() }
+                        false -> { }
+                        null -> {
+                            changes.forEach { it.consume() }
+                        }
                     }
                 }
 
                 if (isVerticalIntent == true) {
+                    val duration = System.currentTimeMillis() - startTime
                     scope.launch {
-                        pagerState.animateScrollToPage(pagerState.currentPage)
+                        val quickSwipeThreshold = 500 // milliseconds
+                        val currentPos = pagerState.currentPage.toFloat() + pagerState.currentPageOffsetFraction
+                        
+                        val targetPage = when {
+                            // Priority 1: Quick swipe (short duration)
+                            duration < quickSwipeThreshold && abs(netDragY) > 5f -> {
+                                if (netDragY < 0) floor(currentPos).toInt() + 1
+                                else ceil(currentPos).toInt() - 1
+                            }
+                            
+                            // Priority 2: Distance judgment
+                            else -> currentPos.roundToInt()
+                        }
+                        pagerState.animateScrollToPage(targetPage)
                     }
                 }
             }
