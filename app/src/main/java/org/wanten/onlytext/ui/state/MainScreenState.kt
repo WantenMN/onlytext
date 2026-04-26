@@ -7,13 +7,46 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 
+import androidx.compose.runtime.mutableStateMapOf
+import org.wanten.onlytext.ui.components.FileItem
+
 class EditorState {
     var content by mutableStateOf("")
     val focusRequester = FocusRequester()
 }
 
+enum class ProjectType {
+    NONE, FILE, DIRECTORY
+}
+
 class ProjectState(initialName: String) {
     var projectName by mutableStateOf(initialName)
+    var type by mutableStateOf(ProjectType.NONE)
+    
+    var activeFilePath by mutableStateOf<String?>(null)
+    var activeFileName by mutableStateOf<String?>(null)
+    
+    private var _path by mutableStateOf<String?>(null)
+    var path: String?
+        get() = _path
+        set(value) {
+            if (_path != value) {
+                _path = value
+                folderCache.clear()
+                expandedFolders = emptySet()
+                scrollIndex = 0
+                scrollOffset = 0
+            }
+        }
+    
+    // Cache for children of each folder (DocumentID -> List<FileItem>)
+    val folderCache = mutableStateMapOf<String, List<FileItem>>()
+    // Set of expanded folder DocumentIDs
+    var expandedFolders by mutableStateOf(setOf<String>())
+
+    // Scroll position
+    var scrollIndex by mutableStateOf(0)
+    var scrollOffset by mutableStateOf(0)
 }
 
 class MainScreenState {
