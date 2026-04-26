@@ -270,15 +270,15 @@ fun MainScreen() {
                             Box(modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
-                                    val current = vPagerState.currentPage
-                                    val offset = vPagerState.currentPageOffsetFraction
-                                    
-                                    // Calculate the absolute index for this logical row
-                                    val diff = actualRow - (current % verticalPageCount)
-                                    val absolutePage = current + diff
-                                    
-                                    val offsetIndex = absolutePage - current
-                                    translationY = (offsetIndex - offset) * size.height
+                                    val currentPosition =
+                                        vPagerState.currentPage + vPagerState.currentPageOffsetFraction
+                                    val absolutePage = findNearestAbsolutePageForRow(
+                                        actualRow = actualRow,
+                                        rowCount = verticalPageCount,
+                                        currentPosition = currentPosition
+                                    )
+
+                                    translationY = (absolutePage - currentPosition) * size.height
                                 }
                             ) {
                                 pageContents[actualRow][actualCol](hPage, innerPadding)
@@ -289,6 +289,28 @@ fun MainScreen() {
             }
         }
     }
+}
+
+private fun findNearestAbsolutePageForRow(
+    actualRow: Int,
+    rowCount: Int,
+    currentPosition: Float
+): Int {
+    val floorPage = floor(currentPosition).toInt()
+    val normalizedRow = ((actualRow % rowCount) + rowCount) % rowCount
+
+    val baseCandidate = floorPage - floorMod(floorPage - normalizedRow, rowCount)
+    val previousCandidate = baseCandidate - rowCount
+    val nextCandidate = baseCandidate + rowCount
+
+    return listOf(previousCandidate, baseCandidate, nextCandidate)
+        .minByOrNull { abs(it - currentPosition) }
+        ?: baseCandidate
+}
+
+private fun floorMod(value: Int, mod: Int): Int {
+    val result = value % mod
+    return if (result >= 0) result else result + mod
 }
 
 @Composable
