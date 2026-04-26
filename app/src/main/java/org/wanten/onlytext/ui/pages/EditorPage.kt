@@ -17,6 +17,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,6 +43,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.ViewCompat
@@ -200,6 +202,7 @@ fun EditorPage(
             .padding(innerPadding)
     ) {
         val viewportHeightPx = with(density) { maxHeight.roundToPx() }
+        val minScrollableHeight: Dp = maxHeight + 1.dp
         val fallbackKeyboardHeightPx = (viewportHeightPx * 2f / 5f).toInt()
         val imeHeightPx = WindowInsets.ime.getBottom(density)
         val bottomInsetPx = when {
@@ -263,6 +266,7 @@ fun EditorPage(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(scrollState)
+                    .heightIn(min = minScrollableHeight)
                     .padding(bottom = with(density) { bottomInsetPx.toDp() })
             ) {
             if (textFieldValue.text.isEmpty()) {
