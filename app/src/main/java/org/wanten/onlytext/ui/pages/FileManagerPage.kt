@@ -167,12 +167,9 @@ fun FileManagerPage(
                     }
                 } else {
                     key(project.path) {
-                        val initialIndex = remember { project.scrollIndex }
-                        val initialOffset = remember { project.scrollOffset }
                         FileListView(
                             files = visibleFiles,
-                            initialIndex = initialIndex,
-                            initialOffset = initialOffset,
+                            scrollState = project.lazyListState,
                             onScrollStateChange = { index, offset ->
                                 project.scrollIndex = index
                                 project.scrollOffset = offset

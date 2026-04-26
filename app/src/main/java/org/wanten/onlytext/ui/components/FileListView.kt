@@ -32,16 +32,11 @@ data class FileItem(
 fun FileListView(
     files: List<FileItem>,
     onFileClick: (FileItem) -> Unit,
-    initialIndex: Int = 0,
-    initialOffset: Int = 0,
+    scrollState: LazyListState,
     onScrollStateChange: (Int, Int) -> Unit = { _, _ -> },
     onStickyHeaderClick: ((FileItem) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val scrollState = rememberLazyListState(
-        initialFirstVisibleItemIndex = initialIndex,
-        initialFirstVisibleItemScrollOffset = initialOffset
-    )
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(scrollState) {

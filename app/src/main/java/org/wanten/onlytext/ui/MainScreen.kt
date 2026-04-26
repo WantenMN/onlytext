@@ -79,24 +79,95 @@ fun MainScreen() {
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
 
+    // Create persistent, movable content for each logical page (2 rows x 4 columns).
+    // movableContentOf ensures that UI state (like TextField scroll position and focus)
+    // is preserved even when the content is moved to a different HorizontalPager index.
+    val pageContents = remember(state) {
+        List(verticalPageCount) { r ->
+            List(horizontalPageCount) { c ->
+                movableContentOf { hPage: Int, innerPadding: PaddingValues ->
+                    RenderPageContent(
+                        actualRow = r,
+                        actualCol = c,
+                        hPage = hPage,
+                        hPagerState = hPagerState,
+                        state = state,
+                        innerPadding = innerPadding
+                    )
+                }
+            }
+        }
+    }
+
     // Persistence logic
     LaunchedEffect(hPagerState.currentPage, vPagerState.currentPage) {
         state.save(context, hPagerState.currentPage, vPagerState.currentPage)
     }
 
-    // Monitor projects and editors for changes to save
+    // --- Start of Side-Effect Management ---
+    // These effects run once per project/editor slot for the lifetime of MainScreen,
+    // ensuring background tasks (polling, saving) aren't duplicated by Pager rendering.
     state.projects.forEachIndexed { r, row ->
         row.forEachIndexed { c, project ->
             val editor = state.editors[r][c]
+            
+            // Monitor project state changes for persistence
             LaunchedEffect(
-                project.type, project.path, project.activeFilePath, 
+                project.type, project.path, project.activeFilePath,
                 project.expandedFolders, project.scrollIndex, project.scrollOffset,
                 editor.textFieldValue
             ) {
                 state.save(context, hPagerState.currentPage, vPagerState.currentPage)
             }
+
+            // Auto-save logic (1s debounce)
+            LaunchedEffect(editor.textFieldValue.text) {
+                val currentUriStr = project.activeFilePath
+                if (currentUriStr != null && editor.textFieldValue.text != editor.lastSavedContent) {
+                    delay(1000)
+                    saveFileContent(context, project, editor, Uri.parse(currentUriStr), editor.textFieldValue.text)
+                }
+            }
+
+            // Proactive Polling for external changes (every 2 seconds)
+            LaunchedEffect(project.activeFilePath) {
+                while (true) {
+                    val currentUriStr = project.activeFilePath
+                    if (currentUriStr != null) {
+                        val uri = Uri.parse(currentUriStr)
+                        try {
+                            context.contentResolver.query(
+                                uri,
+                                arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+                                null, null, null
+                            )?.use { cursor ->
+                                if (cursor.moveToFirst()) {
+                                    val modified = cursor.getLong(0)
+                                    if (modified > project.lastModified) {
+                                        loadFileContent(context, project, editor, uri)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) { }
+                    }
+                    delay(2000)
+                }
+            }
+
+            // Lifecycle re-check
+            val lifecycleOwner = LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner, project.activeFilePath) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        project.activeFilePath?.let { loadFileContent(context, project, editor, Uri.parse(it)) }
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
         }
     }
+    // --- End of Side-Effect Management ---
 
     // Background sync for directory trees
     LaunchedEffect(state) {
@@ -168,6 +239,7 @@ fun MainScreen() {
                 .fillMaxSize()
                 .twoFingerVerticalScroll(vPagerState, scope)
         ) {
+            // Dummy VerticalPager to anchor vPagerState and handle coordinate transformations
             VerticalPager(
                 state = vPagerState,
                 modifier = Modifier.fillMaxSize().graphicsLayer { alpha = 0f },
@@ -179,6 +251,7 @@ fun MainScreen() {
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background),
+                beyondViewportPageCount = 1
             ) { hPage ->
                 val actualCol = (hPage % horizontalPageCount + horizontalPageCount) % horizontalPageCount
                 val isSidebar = actualCol == 0 || actualCol == 3
@@ -189,35 +262,27 @@ fun MainScreen() {
                         .zIndex(if (isSidebar) 1f else 0f)
                         .editorPageTransformer(hPage, hPagerState, actualCol)
                 ) {
-                    val offsetFraction = vPagerState.currentPageOffsetFraction
-                    
-                    val rowsToRender = if (offsetFraction > 0) {
-                        listOf(0 to vPagerState.currentPage, 1 to vPagerState.currentPage + 1)
-                    } else if (offsetFraction < 0) {
-                        listOf(-1 to vPagerState.currentPage - 1, 0 to vPagerState.currentPage)
-                    } else {
-                        listOf(0 to vPagerState.currentPage)
-                    }
-
-                    rowsToRender.forEach { (offsetIndex, absolutePage) ->
-                        val actualRow = (absolutePage % verticalPageCount + verticalPageCount) % verticalPageCount
-                        Box(modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                translationY = (offsetIndex - offsetFraction) * size.height
+                    // To preserve scroll state and focus, we must keep both logical rows in the composition tree.
+                    // We calculate which absolute pages correspond to actualRow 0 and 1 near the current scroll position.
+                    for (rowIdx in 0 until verticalPageCount) {
+                        val actualRow = rowIdx
+                        key(actualRow) {
+                            Box(modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    val current = vPagerState.currentPage
+                                    val offset = vPagerState.currentPageOffsetFraction
+                                    
+                                    // Calculate the absolute index for this logical row
+                                    val diff = actualRow - (current % verticalPageCount)
+                                    val absolutePage = current + diff
+                                    
+                                    val offsetIndex = absolutePage - current
+                                    translationY = (offsetIndex - offset) * size.height
+                                }
+                            ) {
+                                pageContents[actualRow][actualCol](hPage, innerPadding)
                             }
-                        ) {
-                            RenderPageContent(
-                                actualRow = actualRow,
-                                actualCol = actualCol,
-                                hPage = hPage,
-                                hPagerState = hPagerState,
-                                state = state,
-                                innerPadding = PaddingValues(
-                                    top = innerPadding.calculateTopPadding(),
-                                    bottom = innerPadding.calculateBottomPadding()
-                                )
-                            )
                         }
                     }
                 }
@@ -242,133 +307,8 @@ private fun RenderPageContent(
     val project = state.projects[actualRow][projectIndex]
     val editor = state.editors[actualRow][projectIndex]
     
-    fun loadFileContent(uri: Uri): Boolean {
-        try {
-            // 1. Check if it's text content first
-            val isText = context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                val buffer = ByteArray(1024)
-                val read = inputStream.read(buffer)
-                if (read <= 0) true
-                else {
-                    var binary = false
-                    for (i in 0 until read) {
-                        if (buffer[i] == 0.toByte()) {
-                            binary = true
-                            break
-                        }
-                    }
-                    !binary
-                }
-            } ?: false
-
-            if (!isText) return false
-
-            // 2. Set active path so UI switches to Editor
-            project.activeFilePath = uri.toString()
-            
-            // 3. Try to get real display name and metadata
-            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-                    if (nameIndex != -1) {
-                        project.activeFileName = cursor.getString(nameIndex)
-                    }
-                    val modIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
-                    if (modIndex != -1) {
-                        project.lastModified = cursor.getLong(modIndex)
-                    }
-                }
-            }
-
-            // 4. Load actual text content
-            context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                val content = inputStream.bufferedReader().readText()
-                if (content != editor.textFieldValue.text) {
-                    editor.textFieldValue = TextFieldValue(content)
-                    editor.lastSavedContent = content
-                }
-            }
-            return true
-        } catch (e: Exception) {
-            // If it failed mid-way and we already set the path, show error
-            if (project.activeFilePath == uri.toString()) {
-                editor.textFieldValue = TextFieldValue("Error loading file: ${e.message}")
-            }
-            return false
-        }
-    }
-
-    fun saveFileContent(uri: Uri, content: String) {
-        if (content == editor.lastSavedContent) return
-        try {
-            context.contentResolver.openOutputStream(uri, "wt")?.use { outputStream ->
-                outputStream.write(content.toByteArray())
-                editor.lastSavedContent = content
-                
-                // Update local timestamp after save to avoid immediate re-load from poll
-                context.contentResolver.query(
-                    uri,
-                    arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
-                    null, null, null
-                )?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        project.lastModified = cursor.getLong(0)
-                    }
-                }
-            }
-        } catch (e: Exception) { }
-    }
-
-    // Auto-save logic (1s debounce)
-    LaunchedEffect(editor.textFieldValue.text) {
-        val currentUriStr = project.activeFilePath
-        if (currentUriStr != null && editor.textFieldValue.text != editor.lastSavedContent) {
-            delay(1000)
-            saveFileContent(Uri.parse(currentUriStr), editor.textFieldValue.text)
-        }
-    }
-
-    // Proactive Polling for external changes (every 5 seconds)
-    LaunchedEffect(project.activeFilePath) {
-        while (true) {
-            val currentUriStr = project.activeFilePath
-            if (currentUriStr != null) {
-                val uri = Uri.parse(currentUriStr)
-                try {
-                    context.contentResolver.query(
-                        uri,
-                        arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
-                        null, null, null
-                    )?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val modified = cursor.getLong(0)
-                            // If system time is newer than our recorded time, reload
-                            if (modified > project.lastModified) {
-                                loadFileContent(uri)
-                            }
-                        }
-                    }
-                } catch (e: Exception) { }
-            }
-            delay(2000)
-        }
-    }
-
-    // Lifecycle re-check
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, project.activeFilePath) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                project.activeFilePath?.let { loadFileContent(Uri.parse(it)) }
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
     val openFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
-            // Take persistable permission for auto-save and polling
             try {
                 val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 context.contentResolver.takePersistableUriPermission(it, flags)
@@ -376,13 +316,12 @@ private fun RenderPageContent(
 
             project.type = ProjectType.FILE
             project.path = it.toString()
-            loadFileContent(it)
+            loadFileContent(context, project, editor, it)
         }
     }
     
     val openFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
-            // Take persistable permission for folder traversal
             try {
                 val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 context.contentResolver.takePersistableUriPermission(it, flags)
@@ -410,7 +349,7 @@ private fun RenderPageContent(
                     project.activeFilePath = it.toString()
                     project.activeFileName = it.lastPathSegment ?: "Untitled.txt"
                     project.folderCache.remove("root")
-                    loadFileContent(it) // Init timestamp
+                    loadFileContent(context, project, editor, it)
                 }
             } catch (e: Exception) { }
         }
@@ -429,7 +368,7 @@ private fun RenderPageContent(
                         } else {
                             Uri.parse(fileItem.path)
                         }
-                        if (loadFileContent(docUri)) {
+                        if (loadFileContent(context, project, editor, docUri)) {
                             scope.launch {
                                 val targetPage = if (actualCol == 0) hPage + 1 else hPage - 1
                                 hPagerState.animateScrollToPage(targetPage)
@@ -468,11 +407,88 @@ private fun RenderPageContent(
                     textFieldValue = editor.textFieldValue,
                     onValueChange = { editor.textFieldValue = it },
                     innerPadding = innerPadding,
-                    focusRequester = editor.focusRequester
+                    focusRequester = editor.focusRequester,
+                    scrollState = editor.scrollState
                 )
             }
         }
     }
+}
+
+private fun loadFileContent(context: android.content.Context, project: ProjectState, editor: EditorState, uri: Uri): Boolean {
+    try {
+        val isText = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            val buffer = ByteArray(1024)
+            val read = inputStream.read(buffer)
+            if (read <= 0) true
+            else {
+                var binary = false
+                for (i in 0 until read) {
+                    if (buffer[i] == 0.toByte()) {
+                        binary = true
+                        break
+                    }
+                }
+                !binary
+            }
+        } ?: false
+
+        if (!isText) return false
+
+        project.activeFilePath = uri.toString()
+        
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                if (nameIndex != -1) {
+                    project.activeFileName = cursor.getString(nameIndex)
+                }
+                val modIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                if (modIndex != -1) {
+                    project.lastModified = cursor.getLong(modIndex)
+                }
+            }
+        }
+
+        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            val content = inputStream.bufferedReader().readText()
+            if (content != editor.textFieldValue.text) {
+                val newSelection = if (editor.textFieldValue.selection.end <= content.length) {
+                    editor.textFieldValue.selection
+                } else {
+                    TextRange(content.length)
+                }
+                editor.textFieldValue = TextFieldValue(content, newSelection)
+                editor.lastSavedContent = content
+            }
+        }
+        return true
+    } catch (e: Exception) {
+        if (project.activeFilePath == uri.toString()) {
+            editor.textFieldValue = TextFieldValue("Error loading file: ${e.message}")
+        }
+        return false
+    }
+}
+
+private fun saveFileContent(context: android.content.Context, project: ProjectState, editor: EditorState, uri: Uri, content: String) {
+    if (content == editor.lastSavedContent) return
+    try {
+        context.contentResolver.openOutputStream(uri, "wt")?.use { outputStream ->
+            outputStream.write(content.toByteArray())
+            editor.lastSavedContent = content
+            
+            context.contentResolver.query(
+                uri,
+                arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+                null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    project.lastModified = cursor.getLong(0)
+                }
+            }
+        }
+    } catch (e: Exception) { }
 }
 
 fun Modifier.twoFingerVerticalScroll(

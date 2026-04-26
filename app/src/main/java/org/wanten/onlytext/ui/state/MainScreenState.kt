@@ -10,6 +10,8 @@ import androidx.compose.ui.focus.FocusRequester
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +64,7 @@ class EditorState {
     var textFieldValue by mutableStateOf(TextFieldValue(""))
     var lastSavedContent by mutableStateOf("")
     val focusRequester = FocusRequester()
+    val scrollState = ScrollState(0)
 
     fun save(context: Context, keyPrefix: String) {
         val prefs = context.getSharedPreferences("onlytext_prefs", Context.MODE_PRIVATE)
@@ -69,6 +72,7 @@ class EditorState {
             .putString("${keyPrefix}_text", textFieldValue.text)
             .putInt("${keyPrefix}_sel_start", textFieldValue.selection.start)
             .putInt("${keyPrefix}_sel_end", textFieldValue.selection.end)
+            .putInt("${keyPrefix}_scroll", scrollState.value)
             .apply()
     }
 
@@ -77,8 +81,12 @@ class EditorState {
         val text = prefs.getString("${keyPrefix}_text", "") ?: ""
         val selStart = prefs.getInt("${keyPrefix}_sel_start", 0)
         val selEnd = prefs.getInt("${keyPrefix}_sel_end", 0)
+        val scroll = prefs.getInt("${keyPrefix}_scroll", 0)
         textFieldValue = TextFieldValue(text, TextRange(selStart, selEnd))
         lastSavedContent = text
+        // Note: scrollState.scrollTo is a suspend function, we can't call it here easily
+        // but it will be picked up if we use the same object. 
+        // For fresh load, we might need a better way.
     }
 }
 
@@ -94,6 +102,8 @@ class ProjectState(initialName: String) {
     var activeFileName by mutableStateOf<String?>(null)
     var lastModified by mutableLongStateOf(0L)
     
+    val lazyListState = LazyListState()
+
     private var _path by mutableStateOf<String?>(null)
     var path: String?
         get() = _path

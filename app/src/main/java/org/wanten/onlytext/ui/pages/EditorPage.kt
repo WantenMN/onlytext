@@ -1,8 +1,11 @@
 package org.wanten.onlytext.ui.pages
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -20,6 +23,7 @@ fun EditorPage(
     onValueChange: (TextFieldValue) -> Unit,
     innerPadding: PaddingValues,
     focusRequester: FocusRequester,
+    scrollState: ScrollState,
     modifier: Modifier = Modifier
 ) {
     TextField(
@@ -28,7 +32,8 @@ fun EditorPage(
         modifier = modifier
             .fillMaxSize()
             .padding(innerPadding)
-            .focusRequester(focusRequester),
+            .focusRequester(focusRequester)
+            .verticalScroll(scrollState),
         placeholder = { Text("Start typing...") },
         colors = TextFieldDefaults.colors(
             focusedContainerColor = Color.Transparent,
