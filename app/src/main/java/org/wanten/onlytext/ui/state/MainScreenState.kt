@@ -12,8 +12,8 @@ class EditorState {
     val focusRequester = FocusRequester()
 }
 
-class SidebarState(initialTitle: String) {
-    var title by mutableStateOf(initialTitle)
+class ProjectState(initialName: String) {
+    var projectName by mutableStateOf(initialName)
 }
 
 class MainScreenState {
@@ -23,10 +23,10 @@ class MainScreenState {
         listOf(EditorState(), EditorState())  // Row 1: Left, Right
     )
 
-    // 2 Rows x 2 Columns of Sidebars
-    val sidebars = listOf(
-        listOf(SidebarState("Top Left Sidebar"), SidebarState("Top Right Sidebar")),
-        listOf(SidebarState("Bottom Left Sidebar"), SidebarState("Bottom Right Sidebar"))
+    // 2 Rows x 2 Columns of File Managers / Projects
+    val projects = listOf(
+        listOf(ProjectState("1"), ProjectState("2")),
+        listOf(ProjectState("3"), ProjectState("4"))
     )
 }
 

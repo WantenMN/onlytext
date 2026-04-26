@@ -27,7 +27,7 @@ import androidx.compose.ui.zIndex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.wanten.onlytext.ui.pages.EditorPage
-import org.wanten.onlytext.ui.pages.SidebarPage
+import org.wanten.onlytext.ui.pages.FileManagerPage
 import org.wanten.onlytext.ui.state.MainScreenState
 import org.wanten.onlytext.ui.state.rememberMainScreenState
 import org.wanten.onlytext.ui.utils.editorPageTransformer
@@ -48,7 +48,6 @@ fun MainScreen() {
     val vCenterOffset = 500 * verticalPageCount
     
     val hPagerState = rememberPagerState(initialPage = hCenterOffset + 1) { hCenterOffset * 2 }
-    // "Ghost" vertical pager state for coordinate logic
     val vPagerState = rememberPagerState(initialPage = vCenterOffset) { vCenterOffset * 2 }
     
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -62,7 +61,6 @@ fun MainScreen() {
         }
     }
 
-    // Infinite logic for Horizontal
     LaunchedEffect(hPagerState) {
         snapshotFlow { hPagerState.isScrollInProgress }.collect { isScrolling ->
             if (!isScrolling) {
@@ -76,7 +74,6 @@ fun MainScreen() {
         }
     }
 
-    // Infinite logic for Vertical (via Ghost State)
     LaunchedEffect(vPagerState) {
         snapshotFlow { vPagerState.isScrollInProgress }.collect { isScrolling ->
             if (!isScrolling) {
@@ -98,15 +95,12 @@ fun MainScreen() {
                 .fillMaxSize()
                 .twoFingerVerticalScroll(vPagerState, scope)
         ) {
-            // "Ghost" Pager to handle vertical snapping physics and infinite logic
-            // It doesn't render anything, just hosts the state
             VerticalPager(
                 state = vPagerState,
                 modifier = Modifier.fillMaxSize().graphicsLayer { alpha = 0f },
                 userScrollEnabled = false
             ) { Box(Modifier.fillMaxSize()) }
 
-            // The main Horizontal Pager
             HorizontalPager(
                 state = hPagerState,
                 modifier = Modifier
@@ -122,10 +116,8 @@ fun MainScreen() {
                         .zIndex(if (isSidebar) 1f else 0f)
                         .editorPageTransformer(hPage, hPagerState, actualCol)
                 ) {
-                    // Manually render Rows based on vPagerState
                     val offsetFraction = vPagerState.currentPageOffsetFraction
                     
-                    // We render current and neighbors to support smooth infinite vertical scroll
                     val rowsToRender = if (offsetFraction > 0) {
                         listOf(0 to vPagerState.currentPage, 1 to vPagerState.currentPage + 1)
                     } else if (offsetFraction < 0) {
@@ -167,9 +159,9 @@ private fun RenderPageContent(
     innerPadding: PaddingValues
 ) {
     when (actualCol) {
-        0 -> SidebarPage(
-            modifier = Modifier.padding(innerPadding),
-            title = state.sidebars[actualRow][0].title,
+        0 -> FileManagerPage(
+            projectName = state.projects[actualRow][0].projectName,
+            contentPadding = innerPadding
         )
         1 -> {
             val editor = state.editors[actualRow][0]
@@ -189,9 +181,9 @@ private fun RenderPageContent(
                 focusRequester = editor.focusRequester
             )
         }
-        3 -> SidebarPage(
-            modifier = Modifier.padding(innerPadding),
-            title = state.sidebars[actualRow][1].title,
+        3 -> FileManagerPage(
+            projectName = state.projects[actualRow][1].projectName,
+            contentPadding = innerPadding
         )
     }
 }
@@ -208,7 +200,7 @@ fun Modifier.twoFingerVerticalScroll(
                 var totalDragX = 0f
                 var totalDragY = 0f
                 var netDragY = 0f
-                val touchSlop = 10f // Threshold to determine direction
+                val touchSlop = 10f
                 val startTime = System.currentTimeMillis()
 
                 while (true) {
@@ -230,7 +222,6 @@ fun Modifier.twoFingerVerticalScroll(
 
                     when (isVerticalIntent) {
                         true -> {
-                            // Locked to vertical: consume all changes and drive scroll
                             val avgDeltaY = changes.map { it.positionChange().y }.average().toFloat()
                             val sensitivity = 3.0f
                             pagerState.dispatchRawDelta(-avgDeltaY * sensitivity)
@@ -246,17 +237,14 @@ fun Modifier.twoFingerVerticalScroll(
                 if (isVerticalIntent == true) {
                     val duration = System.currentTimeMillis() - startTime
                     scope.launch {
-                        val quickSwipeThreshold = 500 // milliseconds
+                        val quickSwipeThreshold = 500
                         val currentPos = pagerState.currentPage.toFloat() + pagerState.currentPageOffsetFraction
                         
                         val targetPage = when {
-                            // Priority 1: Quick swipe (short duration)
                             duration < quickSwipeThreshold && abs(netDragY) > 5f -> {
                                 if (netDragY < 0) floor(currentPos).toInt() + 1
                                 else ceil(currentPos).toInt() - 1
                             }
-                            
-                            // Priority 2: Distance judgment
                             else -> currentPos.roundToInt()
                         }
                         pagerState.animateScrollToPage(targetPage)
