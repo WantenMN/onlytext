@@ -1,5 +1,6 @@
 package org.wanten.onlytext.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -9,15 +10,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 data class FileItem(
     val name: String,
@@ -35,12 +35,14 @@ fun FileListView(
     initialIndex: Int = 0,
     initialOffset: Int = 0,
     onScrollStateChange: (Int, Int) -> Unit = { _, _ -> },
+    onStickyHeaderClick: ((FileItem) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberLazyListState(
         initialFirstVisibleItemIndex = initialIndex,
         initialFirstVisibleItemScrollOffset = initialOffset
     )
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(scrollState) {
         snapshotFlow { scrollState.firstVisibleItemIndex to scrollState.firstVisibleItemScrollOffset }
@@ -49,15 +51,74 @@ fun FileListView(
             }
     }
 
-    LazyColumn(
-        state = scrollState,
-        modifier = modifier.fillMaxSize()
-    ) {
-        items(files, key = { it.path + it.level }) { file ->
-            FileListItem(
-                file = file,
-                onClick = { onFileClick(file) }
-            )
+    val stickyParents by remember(files) {
+        derivedStateOf {
+            val firstIndex = scrollState.firstVisibleItemIndex
+            if (firstIndex < 0 || firstIndex >= files.size) return@derivedStateOf emptyList<FileItem>()
+            
+            val parents = mutableListOf<FileItem>()
+            var currentLevel = files[firstIndex].level
+            
+            // Find all parent directories of the current top visible item
+            for (i in firstIndex - 1 downTo 0) {
+                val item = files[i]
+                if (item.isDirectory && item.level < currentLevel) {
+                    parents.add(0, item)
+                    currentLevel = item.level
+                }
+                if (currentLevel == 0) break
+            }
+            parents
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            state = scrollState,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            items(files, key = { it.path + it.level }) { file ->
+                FileListItem(
+                    file = file,
+                    onClick = { onFileClick(file) }
+                )
+            }
+        }
+
+        // Stacked Sticky Headers Overlay
+        if (stickyParents.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f))
+            ) {
+                stickyParents.forEach { parent ->
+                    FileListItem(
+                        file = parent.copy(isExpanded = true),
+                        onClick = {
+                            if (onStickyHeaderClick != null) {
+                                onStickyHeaderClick(parent)
+                                // Auto-scroll the LazyColumn to this item to avoid visual jump
+                                scope.launch {
+                                    val index = files.indexOfFirst { it.path == parent.path }
+                                    if (index != -1) {
+                                        scrollState.scrollToItem(index)
+                                    }
+                                }
+                            } else {
+                                onFileClick(parent)
+                            }
+                        }
+                    )
+                }
+                // Subtle divider at the bottom of the stack
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f))
+                )
+            }
         }
     }
 }
@@ -86,7 +147,8 @@ fun FileListItem(
                     )
                 }
                 // If this is an expanded folder, draw the start of the line under the arrow with a gap
-                if (file.isExpanded) {
+                // But only if it actually has children to connect to
+                if (file.isExpanded && file.hasChildren) {
                     val x = (16 + file.level * 12 + 6).dp.toPx()
                     drawLine(
                         color = lineColor,

@@ -12,17 +12,19 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 
+import androidx.compose.ui.text.input.TextFieldValue
+
 @Composable
 fun EditorPage(
-    text: String,
-    onTextChange: (String) -> Unit,
+    textFieldValue: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
     innerPadding: PaddingValues,
     focusRequester: FocusRequester,
     modifier: Modifier = Modifier
 ) {
     TextField(
-        value = text,
-        onValueChange = onTextChange,
+        value = textFieldValue,
+        onValueChange = onValueChange,
         modifier = modifier
             .fillMaxSize()
             .padding(innerPadding)

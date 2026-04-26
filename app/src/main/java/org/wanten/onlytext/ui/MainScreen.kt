@@ -31,6 +31,8 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.CoroutineScope
@@ -50,20 +52,80 @@ import kotlin.math.roundToInt
 
 @Composable
 fun MainScreen() {
-    val state = rememberMainScreenState()
-    
+    val context = LocalContext.current
+    val state = remember { MainScreenState() }
+    val initialPages = remember { state.load(context) }
+
     val horizontalPageCount = 4
     val verticalPageCount = 2
     
     val hCenterOffset = 500 * horizontalPageCount
     val vCenterOffset = 500 * verticalPageCount
     
-    val hPagerState = rememberPagerState(initialPage = hCenterOffset + 1) { hCenterOffset * 2 }
-    val vPagerState = rememberPagerState(initialPage = vCenterOffset) { vCenterOffset * 2 }
+    val hPagerState = rememberPagerState(
+        initialPage = initialPages?.first?.let { savedHPage ->
+            val actual = (savedHPage % horizontalPageCount + horizontalPageCount) % horizontalPageCount
+            // Force return to editor if we were on a sidebar
+            when (actual) {
+                0 -> savedHPage + 1
+                3 -> savedHPage - 1
+                else -> savedHPage
+            }
+        } ?: (hCenterOffset + 1)
+    ) { hCenterOffset * 2 }
+    val vPagerState = rememberPagerState(initialPage = initialPages?.second ?: vCenterOffset) { vCenterOffset * 2 }
     
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
+
+    // Persistence logic
+    LaunchedEffect(hPagerState.currentPage, vPagerState.currentPage) {
+        state.save(context, hPagerState.currentPage, vPagerState.currentPage)
+    }
+
+    // Monitor projects and editors for changes to save
+    state.projects.forEachIndexed { r, row ->
+        row.forEachIndexed { c, project ->
+            val editor = state.editors[r][c]
+            LaunchedEffect(
+                project.type, project.path, project.activeFilePath, 
+                project.expandedFolders, project.scrollIndex, project.scrollOffset,
+                editor.textFieldValue
+            ) {
+                state.save(context, hPagerState.currentPage, vPagerState.currentPage)
+            }
+        }
+    }
+
+    // Background sync for directory trees
+    LaunchedEffect(state) {
+        while (true) {
+            state.projects.forEach { row ->
+                row.forEach { project ->
+                    if (project.type == ProjectType.DIRECTORY && project.path != null) {
+                        val treeUri = Uri.parse(project.path!!)
+                        try {
+                            val rootId = DocumentsContract.getTreeDocumentId(treeUri)
+                            val freshRoot = fetchChildren(context, treeUri, rootId, 0)
+                            if (freshRoot != project.folderCache["root"]) {
+                                project.folderCache["root"] = freshRoot
+                            }
+                            
+                            project.expandedFolders.forEach { docId ->
+                                val level = findLevel(project, docId)
+                                val fresh = fetchChildren(context, treeUri, docId, level + 1)
+                                if (fresh != project.folderCache[docId]) {
+                                    project.folderCache[docId] = fresh
+                                }
+                            }
+                        } catch (e: Exception) { }
+                    }
+                }
+            }
+            delay(15000)
+        }
+    }
 
     LaunchedEffect(hPagerState, vPagerState) {
         snapshotFlow { hPagerState.currentPage to vPagerState.currentPage }.collect { _ ->
@@ -180,12 +242,31 @@ private fun RenderPageContent(
     val project = state.projects[actualRow][projectIndex]
     val editor = state.editors[actualRow][projectIndex]
     
-    fun loadFileContent(uri: Uri) {
-        // 1. Immediately set active path so UI switches from Welcome to Editor
-        project.activeFilePath = uri.toString()
-        
+    fun loadFileContent(uri: Uri): Boolean {
         try {
-            // 2. Try to get real display name and metadata
+            // 1. Check if it's text content first
+            val isText = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                val buffer = ByteArray(1024)
+                val read = inputStream.read(buffer)
+                if (read <= 0) true
+                else {
+                    var binary = false
+                    for (i in 0 until read) {
+                        if (buffer[i] == 0.toByte()) {
+                            binary = true
+                            break
+                        }
+                    }
+                    !binary
+                }
+            } ?: false
+
+            if (!isText) return false
+
+            // 2. Set active path so UI switches to Editor
+            project.activeFilePath = uri.toString()
+            
+            // 3. Try to get real display name and metadata
             context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
@@ -199,17 +280,21 @@ private fun RenderPageContent(
                 }
             }
 
-            // 3. Load actual text content
+            // 4. Load actual text content
             context.contentResolver.openInputStream(uri)?.use { inputStream ->
                 val content = inputStream.bufferedReader().readText()
-                if (content != editor.content) {
-                    editor.content = content
+                if (content != editor.textFieldValue.text) {
+                    editor.textFieldValue = TextFieldValue(content)
                     editor.lastSavedContent = content
                 }
             }
+            return true
         } catch (e: Exception) {
-            // Show error in editor so user knows what happened
-            editor.content = "Error loading file: ${e.message}"
+            // If it failed mid-way and we already set the path, show error
+            if (project.activeFilePath == uri.toString()) {
+                editor.textFieldValue = TextFieldValue("Error loading file: ${e.message}")
+            }
+            return false
         }
     }
 
@@ -235,11 +320,11 @@ private fun RenderPageContent(
     }
 
     // Auto-save logic (1s debounce)
-    LaunchedEffect(editor.content) {
+    LaunchedEffect(editor.textFieldValue.text) {
         val currentUriStr = project.activeFilePath
-        if (currentUriStr != null && editor.content != editor.lastSavedContent) {
+        if (currentUriStr != null && editor.textFieldValue.text != editor.lastSavedContent) {
             delay(1000)
-            saveFileContent(Uri.parse(currentUriStr), editor.content)
+            saveFileContent(Uri.parse(currentUriStr), editor.textFieldValue.text)
         }
     }
 
@@ -321,7 +406,7 @@ private fun RenderPageContent(
                     "Untitled.txt"
                 )
                 newFileUri?.let {
-                    editor.content = ""
+                    editor.textFieldValue = TextFieldValue("")
                     project.activeFilePath = it.toString()
                     project.activeFileName = it.lastPathSegment ?: "Untitled.txt"
                     project.folderCache.remove("root")
@@ -344,10 +429,11 @@ private fun RenderPageContent(
                         } else {
                             Uri.parse(fileItem.path)
                         }
-                        loadFileContent(docUri)
-                        scope.launch {
-                            val targetPage = if (actualCol == 0) hPage + 1 else hPage - 1
-                            hPagerState.animateScrollToPage(targetPage)
+                        if (loadFileContent(docUri)) {
+                            scope.launch {
+                                val targetPage = if (actualCol == 0) hPage + 1 else hPage - 1
+                                hPagerState.animateScrollToPage(targetPage)
+                            }
                         }
                     }
                 },
@@ -379,8 +465,8 @@ private fun RenderPageContent(
                 )
             } else {
                 EditorPage(
-                    text = editor.content,
-                    onTextChange = { editor.content = it },
+                    textFieldValue = editor.textFieldValue,
+                    onValueChange = { editor.textFieldValue = it },
                     innerPadding = innerPadding,
                     focusRequester = editor.focusRequester
                 )

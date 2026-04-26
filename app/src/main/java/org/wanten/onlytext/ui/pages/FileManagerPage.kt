@@ -11,6 +11,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -22,6 +25,7 @@ import org.wanten.onlytext.ui.components.FileItem
 import org.wanten.onlytext.ui.components.FileListView
 import org.wanten.onlytext.ui.state.ProjectState
 import org.wanten.onlytext.ui.state.ProjectType
+import org.wanten.onlytext.ui.state.fetchChildren
 
 @Composable
 fun FileManagerPage(
@@ -46,64 +50,6 @@ fun FileManagerPage(
         }
     }
 
-    // 探测是否为文本文件：基础 MIME 检查 + Binary Sniffing
-    fun isTextFile(context: Context, treeUri: Uri, documentId: String, mimeType: String?): Boolean {
-        if (mimeType != null) {
-            if (mimeType.startsWith("text/")) return true
-            if (mimeType == "application/json" || mimeType == "application/xml" || 
-                mimeType == "application/javascript" || mimeType.contains("script")) return true
-        }
-
-        return try {
-            val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
-            context.contentResolver.openInputStream(docUri)?.use { input ->
-                val buffer = ByteArray(1024)
-                val read = input.read(buffer)
-                if (read <= 0) return true
-                for (i in 0 until read) {
-                    if (buffer[i] == 0.toByte()) return false // 包含 NULL 字节，判定为二进制
-                }
-                true
-            } ?: false
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    suspend fun fetchChildren(treeUri: Uri, documentId: String, level: Int): List<FileItem> = withContext(Dispatchers.IO) {
-        val children = mutableListOf<FileItem>()
-        try {
-            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId)
-            context.contentResolver.query(
-                childrenUri,
-                arrayOf(
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                    DocumentsContract.Document.COLUMN_MIME_TYPE,
-                    DocumentsContract.Document.COLUMN_DOCUMENT_ID
-                ),
-                null, null, null
-            )?.use { cursor ->
-                val nameIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-                val mimeIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
-                val idIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-
-                while (cursor.moveToNext()) {
-                    val name = cursor.getString(nameIndex)
-                    val mime = cursor.getString(mimeIndex)
-                    val id = cursor.getString(idIndex)
-                    val isDir = mime == DocumentsContract.Document.MIME_TYPE_DIR
-                    
-                    if (isDir || isTextFile(context, treeUri, id, mime)) {
-                        children.add(FileItem(name, isDir, id, level = level))
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            return@withContext listOf(FileItem("Error: ${e.message}", false, "error_$documentId", level = level))
-        }
-        children.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-    }
-
     LaunchedEffect(project.path, project.type) {
         if (project.path == null || project.type == ProjectType.NONE) return@LaunchedEffect
         if (project.folderCache.containsKey("root")) return@LaunchedEffect
@@ -114,25 +60,63 @@ fun FileManagerPage(
         } else if (project.type == ProjectType.DIRECTORY) {
             isLoadingRoot = true
             val rootId = DocumentsContract.getTreeDocumentId(uri)
-            val rootChildren = fetchChildren(uri, rootId, 0)
+            val rootChildren = fetchChildren(context, uri, rootId, 0)
             project.folderCache["root"] = rootChildren
             isLoadingRoot = false
         }
     }
 
-    val visibleFiles = remember(project.folderCache.size, project.expandedFolders) {
-        val list = mutableListOf<FileItem>()
-        fun addChildren(parentId: String) {
-            project.folderCache[parentId]?.forEach { item ->
-                val isExpanded = project.expandedFolders.contains(item.path)
-                list.add(item.copy(isExpanded = isExpanded))
-                if (item.isDirectory && isExpanded) {
-                    addChildren(item.path)
+    val visibleFiles by remember(project) {
+        derivedStateOf {
+            val list = mutableListOf<FileItem>()
+            fun addChildren(parentId: String) {
+                project.folderCache[parentId]?.forEach { item ->
+                    val isExpanded = project.expandedFolders.contains(item.path)
+                    val children = project.folderCache[item.path]
+                    val actuallyHasChildren = if (item.isDirectory) {
+                        children == null || children.isNotEmpty()
+                    } else false
+                    
+                    list.add(item.copy(isExpanded = isExpanded, hasChildren = actuallyHasChildren))
+                    if (item.isDirectory && isExpanded) {
+                        addChildren(item.path)
+                    }
+                }
+            }
+            addChildren("root")
+            list
+        }
+    }
+
+    LaunchedEffect(visibleFiles, project.isRecursiveExpanding, project.folderCache.size) {
+        if (project.path == null || !project.isRecursiveExpanding) return@LaunchedEffect
+        val uri = Uri.parse(project.path)
+
+        // Strict DFS: Process the very first folder in visibleFiles that needs expansion or loading.
+        // This naturally prioritizes the first child of the first folder, etc.
+        for (item in visibleFiles) {
+            if (item.isDirectory && !project.skippedFolders.contains(item.path)) {
+                if (!item.isExpanded) {
+                    // Expand the first encountered unexpanded folder
+                    project.expandedFolders = project.expandedFolders + item.path
+                    
+                    // Immediately fetch its children if not cached
+                    if (!project.folderCache.containsKey(item.path)) {
+                        val children = fetchChildren(context, uri, item.path, item.level + 1)
+                        project.folderCache[item.path] = children
+                    }
+                    return@LaunchedEffect // Move to next iteration to re-scan from top
+                } else if (!project.folderCache.containsKey(item.path)) {
+                    // It is expanded but missing cache (could happen during state recovery)
+                    val children = fetchChildren(context, uri, item.path, item.level + 1)
+                    project.folderCache[item.path] = children
+                    return@LaunchedEffect
                 }
             }
         }
-        addChildren("root")
-        list
+
+        // If we traversed the whole visible list and found nothing to expand or fetch, we are done.
+        project.isRecursiveExpanding = false
     }
 
     Surface(
@@ -182,33 +166,52 @@ fun FileManagerPage(
                         Text(text = if (project.type == ProjectType.NONE) "No Project Open" else "Empty Directory", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
                     }
                 } else {
-                    FileListView(
-                        files = visibleFiles,
-                        initialIndex = project.scrollIndex,
-                        initialOffset = project.scrollOffset,
-                        onScrollStateChange = { index, offset ->
-                            project.scrollIndex = index
-                            project.scrollOffset = offset
-                        },
-                        onFileClick = { file ->
-                            if (file.isDirectory) {
+                    key(project.path) {
+                        val initialIndex = remember { project.scrollIndex }
+                        val initialOffset = remember { project.scrollOffset }
+                        FileListView(
+                            files = visibleFiles,
+                            initialIndex = initialIndex,
+                            initialOffset = initialOffset,
+                            onScrollStateChange = { index, offset ->
+                                project.scrollIndex = index
+                                project.scrollOffset = offset
+                            },
+                            onStickyHeaderClick = { file ->
+                                // Custom handler for sticky header clicks to prevent jump
+                                if (project.isRecursiveExpanding) {
+                                    project.skippedFolders = project.skippedFolders + file.path
+                                }
                                 if (project.expandedFolders.contains(file.path)) {
                                     project.expandedFolders = project.expandedFolders - file.path
-                                } else {
-                                    project.expandedFolders = project.expandedFolders + file.path
-                                    if (!project.folderCache.containsKey(file.path)) {
-                                        scope.launch {
-                                            val uri = Uri.parse(project.path!!)
-                                            val children = fetchChildren(uri, file.path, file.level + 1)
-                                            project.folderCache[file.path] = children
+                                }
+                            },
+                            onFileClick = { file ->
+                                if (file.isDirectory) {
+                                    if (project.isRecursiveExpanding) {
+                                        if (project.expandedFolders.contains(file.path)) {
+                                            project.skippedFolders = project.skippedFolders + file.path
                                         }
                                     }
+                                    
+                                    if (project.expandedFolders.contains(file.path)) {
+                                        project.expandedFolders = project.expandedFolders - file.path
+                                    } else {
+                                        project.expandedFolders = project.expandedFolders + file.path
+                                        if (!project.folderCache.containsKey(file.path)) {
+                                            scope.launch {
+                                                val uri = Uri.parse(project.path!!)
+                                                val children = fetchChildren(context, uri, file.path, file.level + 1)
+                                                project.folderCache[file.path] = children
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    onFileSelected(file)
                                 }
-                            } else {
-                                onFileSelected(file)
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
 
@@ -226,8 +229,55 @@ fun FileManagerPage(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    var showMenu by remember { mutableStateOf(false) }
+                    val isAnyExpanded = project.expandedFolders.isNotEmpty()
                     val tintColor = MaterialTheme.colorScheme.primary
+                    
+                    IconButton(onClick = {
+                        if (isAnyExpanded) {
+                            project.isRecursiveExpanding = false
+                            project.skippedFolders = emptySet()
+                            project.expandedFolders = emptySet()
+                            // Clear all cache except root to truly reset
+                            val rootItems = project.folderCache["root"]
+                            project.folderCache.clear()
+                            if (rootItems != null) project.folderCache["root"] = rootItems
+                        } else {
+                            project.skippedFolders = emptySet()
+                            project.isRecursiveExpanding = true
+                        }
+                    }) {
+                        Canvas(modifier = Modifier.size(24.dp)) {
+                            val sw = 1.2.dp.toPx()
+                            val color = tintColor
+                            val d = 5.dp.toPx()
+                            
+                            if (isAnyExpanded) {
+                                // Collapse: Inward arrows pointing to each other
+                                // Top-right to center
+                                drawLine(color, Offset(size.width * 0.8f, size.height * 0.2f), Offset(size.width * 0.55f, size.height * 0.45f), sw, StrokeCap.Round)
+                                drawLine(color, Offset(size.width * 0.55f, size.height * 0.45f), Offset(size.width * 0.55f + d, size.height * 0.45f), sw, StrokeCap.Round)
+                                drawLine(color, Offset(size.width * 0.55f, size.height * 0.45f), Offset(size.width * 0.55f, size.height * 0.45f - d), sw, StrokeCap.Round)
+                                
+                                // Bottom-left to center
+                                drawLine(color, Offset(size.width * 0.2f, size.height * 0.8f), Offset(size.width * 0.45f, size.height * 0.55f), sw, StrokeCap.Round)
+                                drawLine(color, Offset(size.width * 0.45f, size.height * 0.55f), Offset(size.width * 0.45f - d, size.height * 0.55f), sw, StrokeCap.Round)
+                                drawLine(color, Offset(size.width * 0.45f, size.height * 0.55f), Offset(size.width * 0.45f, size.height * 0.55f + d), sw, StrokeCap.Round)
+                            } else {
+                                // Expand: Outward arrows pointing away
+                                // Center to top-right
+                                drawLine(color, Offset(size.width * 0.55f, size.height * 0.45f), Offset(size.width * 0.8f, size.height * 0.2f), sw, StrokeCap.Round)
+                                drawLine(color, Offset(size.width * 0.8f, size.height * 0.2f), Offset(size.width * 0.8f - d, size.height * 0.2f), sw, StrokeCap.Round)
+                                drawLine(color, Offset(size.width * 0.8f, size.height * 0.2f), Offset(size.width * 0.8f, size.height * 0.2f + d), sw, StrokeCap.Round)
+                                
+                                // Center to bottom-left
+                                drawLine(color, Offset(size.width * 0.45f, size.height * 0.55f), Offset(size.width * 0.2f, size.height * 0.8f), sw, StrokeCap.Round)
+                                drawLine(color, Offset(size.width * 0.2f, size.height * 0.8f), Offset(size.width * 0.2f + d, size.height * 0.8f), sw, StrokeCap.Round)
+                                drawLine(color, Offset(size.width * 0.2f, size.height * 0.8f), Offset(size.width * 0.2f, size.height * 0.8f - d), sw, StrokeCap.Round)
+                            }
+                        }
+                    }
+
+                    var showMenu by remember { mutableStateOf(false) }
                     
                     Box(contentAlignment = Alignment.Center) {
                         IconButton(onClick = { showMenu = true }) {
