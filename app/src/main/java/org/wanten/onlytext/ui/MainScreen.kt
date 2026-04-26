@@ -1,6 +1,10 @@
 package org.wanten.onlytext.ui
 
+import android.content.Intent
+import android.database.ContentObserver
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,10 +19,7 @@ import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -27,19 +28,19 @@ import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.wanten.onlytext.ui.pages.EditorPage
 import org.wanten.onlytext.ui.pages.FileManagerPage
 import org.wanten.onlytext.ui.pages.ProjectWelcomePage
 import org.wanten.onlytext.ui.pages.WelcomePage
-import org.wanten.onlytext.ui.state.EditorState
-import org.wanten.onlytext.ui.state.MainScreenState
-import org.wanten.onlytext.ui.state.ProjectState
-import org.wanten.onlytext.ui.state.ProjectType
-import org.wanten.onlytext.ui.state.rememberMainScreenState
+import org.wanten.onlytext.ui.state.*
 import org.wanten.onlytext.ui.utils.editorPageTransformer
 import kotlin.math.abs
 import kotlin.math.absoluteValue
@@ -175,26 +176,119 @@ private fun RenderPageContent(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Determine which project/editor this belongs to
     val projectIndex = if (actualCol == 0 || actualCol == 1) 0 else 1
     val project = state.projects[actualRow][projectIndex]
     val editor = state.editors[actualRow][projectIndex]
     
     fun loadFileContent(uri: Uri) {
+        // 1. Immediately set active path so UI switches from Welcome to Editor
+        project.activeFilePath = uri.toString()
+        
         try {
+            // 2. Try to get real display name and metadata
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                    if (nameIndex != -1) {
+                        project.activeFileName = cursor.getString(nameIndex)
+                    }
+                    val modIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                    if (modIndex != -1) {
+                        project.lastModified = cursor.getLong(modIndex)
+                    }
+                }
+            }
+
+            // 3. Load actual text content
             context.contentResolver.openInputStream(uri)?.use { inputStream ->
                 val content = inputStream.bufferedReader().readText()
-                editor.content = content
-                project.activeFilePath = uri.toString()
-                project.activeFileName = uri.lastPathSegment ?: "Untitled"
+                if (content != editor.content) {
+                    editor.content = content
+                    editor.lastSavedContent = content
+                }
             }
         } catch (e: Exception) {
+            // Show error in editor so user knows what happened
             editor.content = "Error loading file: ${e.message}"
         }
     }
 
+    fun saveFileContent(uri: Uri, content: String) {
+        if (content == editor.lastSavedContent) return
+        try {
+            context.contentResolver.openOutputStream(uri, "wt")?.use { outputStream ->
+                outputStream.write(content.toByteArray())
+                editor.lastSavedContent = content
+                
+                // Update local timestamp after save to avoid immediate re-load from poll
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+                    null, null, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        project.lastModified = cursor.getLong(0)
+                    }
+                }
+            }
+        } catch (e: Exception) { }
+    }
+
+    // Auto-save logic (1s debounce)
+    LaunchedEffect(editor.content) {
+        val currentUriStr = project.activeFilePath
+        if (currentUriStr != null && editor.content != editor.lastSavedContent) {
+            delay(1000)
+            saveFileContent(Uri.parse(currentUriStr), editor.content)
+        }
+    }
+
+    // Proactive Polling for external changes (every 5 seconds)
+    LaunchedEffect(project.activeFilePath) {
+        while (true) {
+            val currentUriStr = project.activeFilePath
+            if (currentUriStr != null) {
+                val uri = Uri.parse(currentUriStr)
+                try {
+                    context.contentResolver.query(
+                        uri,
+                        arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+                        null, null, null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val modified = cursor.getLong(0)
+                            // If system time is newer than our recorded time, reload
+                            if (modified > project.lastModified) {
+                                loadFileContent(uri)
+                            }
+                        }
+                    }
+                } catch (e: Exception) { }
+            }
+            delay(2000)
+        }
+    }
+
+    // Lifecycle re-check
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, project.activeFilePath) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                project.activeFilePath?.let { loadFileContent(Uri.parse(it)) }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val openFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
+            // Take persistable permission for auto-save and polling
+            try {
+                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(it, flags)
+            } catch (e: Exception) { }
+
             project.type = ProjectType.FILE
             project.path = it.toString()
             loadFileContent(it)
@@ -203,9 +297,15 @@ private fun RenderPageContent(
     
     val openFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
+            // Take persistable permission for folder traversal
+            try {
+                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(it, flags)
+            } catch (e: Exception) { }
+
             project.type = ProjectType.DIRECTORY
             project.path = it.toString()
-            project.activeFilePath = null // Reset active file when opening new folder
+            project.activeFilePath = null
         }
     }
 
@@ -224,11 +324,10 @@ private fun RenderPageContent(
                     editor.content = ""
                     project.activeFilePath = it.toString()
                     project.activeFileName = it.lastPathSegment ?: "Untitled.txt"
-                    project.folderCache.remove("root") // Refresh root list
+                    project.folderCache.remove("root")
+                    loadFileContent(it) // Init timestamp
                 }
-            } catch (e: Exception) {
-                // Handle error
-            }
+            } catch (e: Exception) { }
         }
     }
 
@@ -239,11 +338,13 @@ private fun RenderPageContent(
                 contentPadding = innerPadding,
                 onFileSelected = { fileItem ->
                     if (!fileItem.isDirectory) {
-                        val treeUri = Uri.parse(project.path)
-                        val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, fileItem.path)
+                        val docUri = if (project.type == ProjectType.DIRECTORY) {
+                            val treeUri = Uri.parse(project.path)
+                            DocumentsContract.buildDocumentUriUsingTree(treeUri, fileItem.path)
+                        } else {
+                            Uri.parse(fileItem.path)
+                        }
                         loadFileContent(docUri)
-                        
-                        // Switch back to editor
                         scope.launch {
                             val targetPage = if (actualCol == 0) hPage + 1 else hPage - 1
                             hPagerState.animateScrollToPage(targetPage)
@@ -269,7 +370,6 @@ private fun RenderPageContent(
                 ProjectWelcomePage(
                     onCreateFile = { handleCreateFile() },
                     onSelectFile = {
-                        // Switch to sidebar
                         scope.launch {
                             val targetPage = if (actualCol == 1) hPage - 1 else hPage + 1
                             hPagerState.animateScrollToPage(targetPage)

@@ -12,6 +12,7 @@ import org.wanten.onlytext.ui.components.FileItem
 
 class EditorState {
     var content by mutableStateOf("")
+    var lastSavedContent by mutableStateOf("")
     val focusRequester = FocusRequester()
 }
 
@@ -25,6 +26,7 @@ class ProjectState(initialName: String) {
     
     var activeFilePath by mutableStateOf<String?>(null)
     var activeFileName by mutableStateOf<String?>(null)
+    var lastModified by mutableStateOf(0L)
     
     private var _path by mutableStateOf<String?>(null)
     var path: String?
