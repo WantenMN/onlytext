@@ -378,7 +378,7 @@ class ProjectState(initialName: String) {
         
         var i = 1
         while (true) {
-            val candidate = "$base $i$ext"
+            val candidate = "$base ($i)$ext"
             if (siblings.none { it.name == candidate }) return candidate
             i++
         }
@@ -481,24 +481,33 @@ object GlobalDirectoryCache {
                 // root children are level 0
                 queue.add(rootId to 0)
                 
+                val allDirs = mutableListOf<FileItem>()
                 while (queue.isNotEmpty()) {
                     ensureActive()
                     val (currentId, level) = queue.poll()!!
                     val children = fetchChildren(context, treeUri, currentId, level)
                     
-                    val newDirs = mutableListOf<FileItem>()
                     for (child in children) {
                         if (child.isDirectory) {
-                            newDirs.add(child)
+                            allDirs.add(child)
                             queue.add(child.path to level + 1)
                         }
                     }
                     
-                    if (newDirs.isNotEmpty()) {
+                    // Update main thread every 20 folders or so to show progress but not saturate
+                    if (allDirs.size >= 20) {
+                        val chunk = allDirs.toList()
+                        allDirs.clear()
                         withContext(Dispatchers.Main) {
                             val currentList = cache[rootPath] ?: emptyList()
-                            cache[rootPath] = currentList + newDirs
+                            cache[rootPath] = currentList + chunk
                         }
+                    }
+                }
+                if (allDirs.isNotEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        val currentList = cache[rootPath] ?: emptyList()
+                        cache[rootPath] = currentList + allDirs
                     }
                 }
             } catch (e: Exception) {

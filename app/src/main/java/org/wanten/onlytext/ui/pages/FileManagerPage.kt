@@ -6,6 +6,9 @@ import android.provider.DocumentsContract
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,9 +21,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.wanten.onlytext.ui.components.CreateItemMenu
 import org.wanten.onlytext.ui.components.FileContextMenu
 import org.wanten.onlytext.ui.components.FileItem
 import org.wanten.onlytext.ui.components.FileListView
@@ -29,6 +34,7 @@ import org.wanten.onlytext.ui.state.ProjectState
 import org.wanten.onlytext.ui.state.ProjectType
 import org.wanten.onlytext.ui.state.fetchChildren
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FileManagerPage(
     project: ProjectState,
@@ -44,36 +50,14 @@ fun FileManagerPage(
     var isLoadingRoot by remember { mutableStateOf(false) }
 
     var selectedFileForMenu by remember { mutableStateOf<FileItem?>(null) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var isCreatingFolder by remember { mutableStateOf(false) }
 
     val rootDocumentId = remember(project.path) {
         project.path?.let { 
             try {
                 DocumentsContract.getTreeDocumentId(Uri.parse(it))
             } catch (e: Exception) { null }
-        }
-    }
-
-    val allDirectories by remember(project.path) {
-        derivedStateOf {
-            val dirs = mutableListOf(FileItem("Root", true, "root", level = 0))
-            
-            // Items from folder cache (already visited)
-            val fromCache = project.folderCache.values.flatten().filter { it.isDirectory }
-            // Items from global background scan
-            val fromGlobal = project.path?.let { GlobalDirectoryCache.cache[it] } ?: emptyList()
-            
-            (fromCache + fromGlobal).distinctBy { it.path }.forEach {
-                if (it.path != "root") dirs.add(it)
-            }
-            dirs.distinctBy { it.path }
-        }
-    }
-
-    val currentSiblings = remember(selectedFileForMenu, project.folderCache.size) {
-        if (selectedFileForMenu == null) emptyList<FileItem>()
-        else {
-            val parentPath = project.findParentPath(selectedFileForMenu!!.path) ?: "root"
-            project.folderCache[parentPath] ?: emptyList()
         }
     }
 
@@ -265,6 +249,35 @@ fun FileManagerPage(
             }
 
             if (selectedFileForMenu != null) {
+                // Defer heavy directory list calculation until menu is actually shown
+                val allDirectories = remember(project.path, GlobalDirectoryCache.cache[project.path ?: ""], project.folderCache.size) {
+                    val dirs = mutableListOf(FileItem("Root", true, "root", level = 0))
+                    
+                    // Items from folder cache (already visited)
+                    val fromCache = project.folderCache.values.flatten().filter { it.isDirectory }
+                    // Items from global background scan
+                    val fromGlobal = project.path?.let { GlobalDirectoryCache.cache[it] } ?: emptyList()
+                    
+                    (fromCache + fromGlobal).distinctBy { it.path }.forEach {
+                        if (it.path != "root") dirs.add(it)
+                    }
+                    dirs.distinctBy { it.path }
+                }
+
+                val currentSiblings = remember(selectedFileForMenu, project.folderCache.size) {
+                    val parentPath = project.findParentPath(selectedFileForMenu!!.path) ?: "root"
+                    project.folderCache[parentPath] ?: emptyList()
+                }
+
+                val targetChildrenForCreate = remember(selectedFileForMenu, project.folderCache.size) {
+                    if (selectedFileForMenu!!.isDirectory) {
+                        project.folderCache[selectedFileForMenu!!.path] ?: emptyList()
+                    } else {
+                        val parentPath = project.findParentPath(selectedFileForMenu!!.path) ?: "root"
+                        project.folderCache[parentPath] ?: emptyList()
+                    }
+                }
+
                 FileContextMenu(
                     file = selectedFileForMenu!!,
                     onDismissRequest = { selectedFileForMenu = null },
@@ -300,6 +313,7 @@ fun FileManagerPage(
                     },
                     allDirectories = allDirectories,
                     currentSiblings = currentSiblings,
+                    targetChildren = targetChildrenForCreate,
                     projectRootPath = rootDocumentId,
                     actualParentPath = if (selectedFileForMenu!!.isDirectory) {
                         selectedFileForMenu!!.path
@@ -307,6 +321,32 @@ fun FileManagerPage(
                         project.findParentPath(selectedFileForMenu!!.path) ?: "root"
                     }
                 )
+            }
+
+            if (showCreateDialog) {
+                Dialog(onDismissRequest = { showCreateDialog = false }) {
+                    Surface(
+                        shape = MaterialTheme.shapes.extraLarge,
+                        tonalElevation = 6.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        CreateItemMenu(
+                            isDirectory = isCreatingFolder,
+                            targetPath = "root",
+                            projectRootPath = rootDocumentId,
+                            siblings = project.folderCache["root"] ?: emptyList(),
+                            onConfirm = { name ->
+                                project.createFile(context, "root", name, isCreatingFolder, scope) { newItem ->
+                                    if (!isCreatingFolder) {
+                                        onFileSelected(newItem)
+                                    }
+                                }
+                                showCreateDialog = false
+                            },
+                            onBack = { showCreateDialog = false }
+                        )
+                    }
+                }
             }
 
             // Bottom Toolbar
@@ -320,12 +360,36 @@ fun FileManagerPage(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 4.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val isAnyExpanded = project.expandedFolders.isNotEmpty()
                     val tintColor = MaterialTheme.colorScheme.primary
-                    
+
+                    if (project.type == ProjectType.DIRECTORY) {
+                        IconButton(onClick = {
+                            isCreatingFolder = false
+                            showCreateDialog = true
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "New File",
+                                tint = tintColor
+                            )
+                        }
+                        IconButton(onClick = {
+                            isCreatingFolder = true
+                            showCreateDialog = true
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.CreateNewFolder,
+                                contentDescription = "New Folder",
+                                tint = tintColor
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
                     IconButton(onClick = {
                         if (isAnyExpanded) {
                             project.isRecursiveExpanding = false

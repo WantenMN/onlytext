@@ -37,6 +37,7 @@ fun FileContextMenu(
     onCreateNew: (String, Boolean) -> Unit, // Name, isDirectory
     allDirectories: List<FileItem> = emptyList(), // For move operation
     currentSiblings: List<FileItem> = emptyList(), // For rename validation
+    targetChildren: List<FileItem> = emptyList(), // For creation validation
     projectRootPath: String? = null,
     actualParentPath: String? = null
 ) {
@@ -107,6 +108,7 @@ fun FileContextMenu(
                 isDirectory = isCreatingDirectory,
                 targetPath = actualParentPath ?: (projectRootPath ?: "root"),
                 projectRootPath = projectRootPath,
+                siblings = targetChildren,
                 onConfirm = { name ->
                     onCreateNew(name, isCreatingDirectory)
                     onDismissRequest()
@@ -486,16 +488,35 @@ private fun fuzzyMatch(query: String, target: String): Boolean {
 }
 
 @Composable
-private fun CreateItemMenu(
+fun CreateItemMenu(
     isDirectory: Boolean,
     targetPath: String,
     projectRootPath: String?,
+    siblings: List<FileItem> = emptyList(),
     onConfirm: (String) -> Unit,
     onBack: () -> Unit
 ) {
-    // Initial name is Untitled.txt, but user can delete extension as requested
-    val initialName = if (isDirectory) "Untitled" else "Untitled.txt"
-    var textFieldValue by remember { 
+    // Automatically determine the default name based on existing siblings
+    val initialName = remember(isDirectory, siblings) {
+        val base = "Untitled"
+        val ext = if (isDirectory) "" else ".txt"
+        val fullName = base + ext
+        
+        if (siblings.none { it.name == fullName }) {
+            fullName
+        } else {
+            var i = 1
+            var candidate: String
+            while (true) {
+                candidate = "$base ($i)$ext"
+                if (siblings.none { it.name == candidate }) break
+                i++
+            }
+            candidate
+        }
+    }
+
+    var textFieldValue by remember(initialName) {
         mutableStateOf(TextFieldValue(initialName, TextRange(0, initialName.length))) 
     }
     val focusRequester = remember { FocusRequester() }
@@ -505,6 +526,14 @@ private fun CreateItemMenu(
     }
 
     val displayPath = simplifyPath(targetPath, projectRootPath)
+    val newName = textFieldValue.text
+    val isAlreadyExists = remember(newName, siblings) {
+        siblings.any { it.name == newName }
+    }
+    val isIllegal = remember(newName) {
+        newName.contains("/") || newName.contains("\\")
+    }
+    val isValid = newName.isNotBlank() && !isAlreadyExists && !isIllegal
 
     Column(
         modifier = Modifier
@@ -529,7 +558,15 @@ private fun CreateItemMenu(
             onValueChange = { textFieldValue = it },
             modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
             label = { Text("Name") },
-            singleLine = true
+            singleLine = true,
+            isError = isAlreadyExists || (isIllegal && newName.isNotBlank()),
+            supportingText = {
+                if (isAlreadyExists) {
+                    Text("A file or folder with this name already exists")
+                } else if (isIllegal && newName.isNotBlank()) {
+                    Text("Invalid characters in name")
+                }
+            }
         )
         Spacer(modifier = Modifier.height(24.dp))
         Row(
@@ -541,8 +578,8 @@ private fun CreateItemMenu(
             }
             Spacer(modifier = Modifier.width(8.dp))
             Button(
-                onClick = { onConfirm(textFieldValue.text) },
-                enabled = textFieldValue.text.isNotBlank()
+                onClick = { onConfirm(newName) },
+                enabled = isValid
             ) {
                 Text("Create")
             }
