@@ -334,19 +334,6 @@ private fun RenderPageContent(
     val project = state.projects[actualRow][projectIndex]
     val editor = state.editors[actualRow][projectIndex]
     
-    val openFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let {
-            try {
-                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                context.contentResolver.takePersistableUriPermission(it, flags)
-            } catch (e: Exception) { }
-
-            project.type = ProjectType.FILE
-            project.path = it.toString()
-            loadFileContent(context, project, editor, it)
-        }
-    }
-    
     val openFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
             try {
@@ -357,17 +344,24 @@ private fun RenderPageContent(
             project.type = ProjectType.DIRECTORY
             project.path = it.toString()
             project.activeFilePath = null
+
+            // Auto switch to FileManager
+            scope.launch {
+                val targetPage = if (actualCol == 1) hPage - 1 else if (actualCol == 2) hPage + 1 else hPage
+                if (targetPage != hPage) {
+                    hPagerState.animateScrollToPage(targetPage)
+                }
+            }
         }
     }
 
     fun selectFile(fileItem: FileItem) {
         if (!fileItem.isDirectory) {
-            val docUri = if (project.type == ProjectType.DIRECTORY) {
-                val treeUri = Uri.parse(project.path)
+            val docUri = project.path?.let {
+                val treeUri = Uri.parse(it)
                 DocumentsContract.buildDocumentUriUsingTree(treeUri, fileItem.path)
-            } else {
-                Uri.parse(fileItem.path)
-            }
+            } ?: return
+            
             if (loadFileContent(context, project, editor, docUri)) {
                 scope.launch {
                     val targetPage = if (actualCol == 0) hPage + 1 else hPage - 1
@@ -396,12 +390,13 @@ private fun RenderPageContent(
         1, 2 -> {
             if (project.type == ProjectType.NONE) {
                 WelcomePage(
-                    onOpenFile = { openFileLauncher.launch(arrayOf("text/plain")) },
+                    editorIndex = project.projectName,
                     onOpenFolder = { openFolderLauncher.launch(null) },
                     innerPadding = innerPadding
                 )
             } else if (project.activeFilePath == null) {
                 ProjectWelcomePage(
+                    editorIndex = project.projectName,
                     onSelectFile = {
                         scope.launch {
                             val targetPage = if (actualCol == 1) hPage - 1 else hPage + 1

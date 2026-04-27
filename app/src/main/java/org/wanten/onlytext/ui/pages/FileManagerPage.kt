@@ -79,9 +79,7 @@ fun FileManagerPage(
         if (project.folderCache.containsKey("root")) return@LaunchedEffect
 
         val uri = Uri.parse(project.path)
-        if (project.type == ProjectType.FILE) {
-            project.folderCache["root"] = listOf(FileItem(displayPath, false, project.path!!, level = 0))
-        } else if (project.type == ProjectType.DIRECTORY) {
+        if (project.type == ProjectType.DIRECTORY) {
             isLoadingRoot = true
             val rootId = DocumentsContract.getTreeDocumentId(uri)
             val rootChildren = fetchChildren(context, uri, rootId, 0)
@@ -196,7 +194,31 @@ fun FileManagerPage(
                     }
                 } else if (visibleFiles.isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(text = if (project.type == ProjectType.NONE) "No Project Open" else "Empty Directory", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                        if (project.type == ProjectType.NONE) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(32.dp)
+                            ) {
+                                Text(
+                                    text = "No Folder Selected",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                )
+                                Spacer(modifier = Modifier.height(24.dp))
+                                OutlinedButton(
+                                    onClick = onOpenFolderClick,
+                                    modifier = Modifier.fillMaxWidth(0.8f)
+                                ) {
+                                    Text("Open Folder")
+                                }
+                            }
+                        } else {
+                            Text(
+                                text = "Empty Directory",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                        }
                     }
                 } else {
                     key(project.path) {

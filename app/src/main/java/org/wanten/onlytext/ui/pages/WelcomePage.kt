@@ -9,7 +9,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun WelcomePage(
-    onOpenFile: () -> Unit,
+    editorIndex: String,
     onOpenFolder: () -> Unit,
     modifier: Modifier = Modifier,
     innerPadding: PaddingValues = PaddingValues(0.dp)
@@ -27,6 +27,12 @@ fun WelcomePage(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
+                text = "EDITOR $editorIndex",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
                 text = "OnlyText",
                 style = MaterialTheme.typography.headlineLarge,
                 color = MaterialTheme.colorScheme.primary
@@ -38,18 +44,11 @@ fun WelcomePage(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(48.dp))
-            Button(
+            OutlinedButton(
                 onClick = onOpenFolder,
                 modifier = Modifier.fillMaxWidth(0.7f)
             ) {
                 Text("Open Folder")
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedButton(
-                onClick = onOpenFile,
-                modifier = Modifier.fillMaxWidth(0.7f)
-            ) {
-                Text("Open File")
             }
         }
     }

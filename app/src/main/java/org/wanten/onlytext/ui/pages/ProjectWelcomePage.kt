@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun ProjectWelcomePage(
+    editorIndex: String,
     onSelectFile: () -> Unit,
     modifier: Modifier = Modifier,
     innerPadding: PaddingValues = PaddingValues(0.dp)
@@ -26,6 +27,12 @@ fun ProjectWelcomePage(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            Text(
+                text = "EDITOR $editorIndex",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "OnlyText",
                 style = MaterialTheme.typography.headlineLarge,
