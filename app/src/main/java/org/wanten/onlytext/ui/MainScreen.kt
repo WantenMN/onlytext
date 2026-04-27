@@ -418,7 +418,13 @@ private fun RenderPageContent(
                     onValueChange = { editor.textFieldValue = it },
                     innerPadding = innerPadding,
                     focusRequester = editor.focusRequester,
-                    scrollState = editor.scrollState
+                    scrollState = editor.scrollState,
+                    lastSavedContent = editor.lastSavedContent,
+                    onSave = {
+                        project.activeFilePath?.let { uriStr ->
+                            saveFileContent(context, project, editor, Uri.parse(uriStr), editor.textFieldValue.text)
+                        }
+                    }
                 )
             }
         }

@@ -12,19 +12,40 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.EaseIn
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +56,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -44,6 +66,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.ViewCompat
@@ -128,7 +151,9 @@ fun EditorPage(
     innerPadding: PaddingValues,
     focusRequester: androidx.compose.ui.focus.FocusRequester,
     scrollState: ScrollState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    lastSavedContent: String = "",
+    onSave: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -146,8 +171,48 @@ fun EditorPage(
         mutableIntStateOf(prefs.getInt(KEYBOARD_HEIGHT_PREF, 0))
     }
     var isImeAnimationRunning by remember { mutableStateOf(false) }
+    var isImeVisible by remember { mutableStateOf(false) }
+    var isShowAnimation by remember { mutableStateOf(false) }
     var editorView by remember { mutableStateOf<StableEditorEditText?>(null) }
     var isEditorFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(view) {
+        isImeVisible = ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+    }
+
+    val imeAnimationCallback = remember(view) {
+        object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+            override fun onPrepare(animation: WindowInsetsAnimationCompat) {
+                if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0) {
+                    isImeAnimationRunning = true
+                    isShowAnimation = !isImeVisible
+                }
+            }
+
+            override fun onProgress(
+                insets: WindowInsetsCompat,
+                runningAnimations: MutableList<WindowInsetsAnimationCompat>
+            ): WindowInsetsCompat = insets
+
+            override fun onEnd(animation: WindowInsetsAnimationCompat) {
+                if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0) {
+                    isImeAnimationRunning = false
+                    isShowAnimation = false
+                    val rootInsets = ViewCompat.getRootWindowInsets(view)
+                    isImeVisible = rootInsets?.isVisible(WindowInsetsCompat.Type.ime()) == true
+
+                    if (isImeVisible) {
+                        val stableImeHeightPx = rootInsets?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
+                        if (stableImeHeightPx > 0 && stableImeHeightPx != cachedKeyboardHeightPx) {
+                            cachedKeyboardHeightPx = stableImeHeightPx
+                            prefs.edit().putInt(KEYBOARD_HEIGHT_PREF, stableImeHeightPx).apply()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     val focusEditorAtEnd = {
         val end = textFieldValue.text.length
         onValueChange(textFieldValue.copy(selection = TextRange(end)))
@@ -160,42 +225,6 @@ fun EditorPage(
         }
     }
 
-    DisposableEffect(view, prefs) {
-        val callback = object : WindowInsetsAnimationCompat.Callback(
-            WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE
-        ) {
-            override fun onPrepare(animation: WindowInsetsAnimationCompat) {
-                if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0) {
-                    isImeAnimationRunning = true
-                }
-            }
-
-            override fun onProgress(
-                insets: WindowInsetsCompat,
-                runningAnimations: MutableList<WindowInsetsAnimationCompat>
-            ): WindowInsetsCompat = insets
-
-            override fun onEnd(animation: WindowInsetsAnimationCompat) {
-                if (animation.typeMask and WindowInsetsCompat.Type.ime() == 0) return
-
-                isImeAnimationRunning = false
-                val rootInsets = ViewCompat.getRootWindowInsets(view) ?: return
-                if (!rootInsets.isVisible(WindowInsetsCompat.Type.ime())) return
-
-                val stableImeHeightPx = rootInsets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-                if (stableImeHeightPx > 0 && stableImeHeightPx != cachedKeyboardHeightPx) {
-                    cachedKeyboardHeightPx = stableImeHeightPx
-                    prefs.edit().putInt(KEYBOARD_HEIGHT_PREF, stableImeHeightPx).apply()
-                }
-            }
-        }
-
-        ViewCompat.setWindowInsetsAnimationCallback(view, callback)
-        onDispose {
-            ViewCompat.setWindowInsetsAnimationCallback(view, null)
-        }
-    }
-
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
@@ -203,15 +232,18 @@ fun EditorPage(
     ) {
         val viewportHeightPx = with(density) { maxHeight.roundToPx() }
         val minScrollableHeight: Dp = maxHeight + 1.dp
-        val fallbackKeyboardHeightPx = (viewportHeightPx * 2f / 5f).toInt()
         val imeHeightPx = WindowInsets.ime.getBottom(density)
-        val bottomInsetPx = when {
-            imeHeightPx > 0 && !isImeAnimationRunning -> imeHeightPx
-            cachedKeyboardHeightPx > 0 -> cachedKeyboardHeightPx
-            else -> fallbackKeyboardHeightPx
-        }
-        val effectiveObscuredHeightPx = if (imeHeightPx > 0) bottomInsetPx else 0
+        val bottomInsetPx = imeHeightPx
+        val bottomPaddingPx = with(density) { innerPadding.calculateBottomPadding().roundToPx() }
+        val toolbarHeight = 40.dp
         val safetyPaddingPx = with(density) { 24.dp.roundToPx() }
+
+        val showToolbar = isEditorFocused && imeHeightPx > 0 && (!isImeAnimationRunning || isShowAnimation)
+        val toolbarPadding by animateDpAsState(
+            targetValue = if (showToolbar) toolbarHeight else 0.dp,
+            label = "toolbar_padding",
+            animationSpec = if (showToolbar) androidx.compose.animation.core.spring() else snap()
+        )
 
         LaunchedEffect(imeHeightPx, isImeAnimationRunning) {
             if (imeHeightPx > 0 && !isImeAnimationRunning && imeHeightPx != cachedKeyboardHeightPx) {
@@ -223,12 +255,12 @@ fun EditorPage(
         LaunchedEffect(
             isEditorFocused,
             imeHeightPx,
-            bottomInsetPx,
+            toolbarPadding,
             textFieldValue.selection,
             textFieldValue.text,
             editorView
         ) {
-            if (!isEditorFocused || effectiveObscuredHeightPx <= 0) return@LaunchedEffect
+            if (!isEditorFocused || (imeHeightPx <= 0 && toolbarPadding <= 0.dp)) return@LaunchedEffect
 
             val editText = editorView ?: return@LaunchedEffect
             val layout = editText.layout ?: return@LaunchedEffect
@@ -237,7 +269,8 @@ fun EditorPage(
             val cursorTop = editText.top + editText.totalPaddingTop + layout.getLineTop(line)
             val cursorBottom = editText.top + editText.totalPaddingTop + layout.getLineBottom(line)
 
-            val visibleHeightPx = (viewportHeightPx - effectiveObscuredHeightPx - safetyPaddingPx).coerceAtLeast(1)
+            val currentObscuredPx = imeHeightPx + with(density) { toolbarPadding.roundToPx() }
+            val visibleHeightPx = (viewportHeightPx - currentObscuredPx - safetyPaddingPx).coerceAtLeast(1)
             val visibleTopPx = scrollState.value
             val visibleBottomPx = visibleTopPx + visibleHeightPx
 
@@ -245,10 +278,17 @@ fun EditorPage(
                 cursorBottom > visibleBottomPx -> cursorBottom - visibleHeightPx
                 cursorTop < visibleTopPx -> cursorTop - safetyPaddingPx
                 else -> null
-            }?.coerceIn(0, scrollState.maxValue)
+            }
 
-            if (targetScroll != null && targetScroll != scrollState.value) {
-                scrollState.animateScrollTo(targetScroll)
+            if (targetScroll != null) {
+                val clampedScroll = targetScroll.coerceIn(0, scrollState.maxValue)
+                if (clampedScroll != scrollState.value) {
+                    if (isImeAnimationRunning || (showToolbar && toolbarPadding < toolbarHeight)) {
+                        scrollState.scrollTo(clampedScroll)
+                    } else {
+                        scrollState.animateScrollTo(clampedScroll)
+                    }
+                }
             }
         }
 
@@ -267,7 +307,7 @@ fun EditorPage(
                     .fillMaxSize()
                     .verticalScroll(scrollState)
                     .heightIn(min = minScrollableHeight)
-                    .padding(bottom = with(density) { bottomInsetPx.toDp() })
+                    .padding(bottom = with(density) { bottomInsetPx.toDp() } + toolbarPadding)
             ) {
             if (textFieldValue.text.isEmpty()) {
                 Text(
@@ -309,6 +349,7 @@ fun EditorPage(
                         setOnFocusChangeListener { _, hasFocus ->
                             isEditorFocused = hasFocus
                         }
+                        ViewCompat.setWindowInsetsAnimationCallback(this, imeAnimationCallback)
                         editorView = this
                     }
                 },
@@ -333,6 +374,7 @@ fun EditorPage(
                     }
                 },
                 onRelease = { editText ->
+                    ViewCompat.setWindowInsetsAnimationCallback(editText, null)
                     editText.onValueChanged = null
                     if (editorView === editText) {
                         isEditorFocused = false
@@ -342,6 +384,74 @@ fun EditorPage(
                     }
                 }
             )
+            }
+
+            AnimatedVisibility(
+                visible = showToolbar,
+                enter = fadeIn(animationSpec = tween(durationMillis = 1000, easing = EaseIn)),
+                exit = fadeOut(animationSpec = snap()),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .offset {
+                        val stableHeight = if (showToolbar && cachedKeyboardHeightPx > 0) {
+                            cachedKeyboardHeightPx
+                        } else {
+                            bottomInsetPx
+                        }
+                        IntOffset(0, -(stableHeight - bottomPaddingPx).coerceAtLeast(0))
+                    }
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(toolbarHeight)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {},
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = { editorView?.onTextContextMenuItem(android.R.id.undo) },
+                        modifier = Modifier.size(toolbarHeight)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Undo,
+                            contentDescription = "Undo",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = { editorView?.onTextContextMenuItem(android.R.id.redo) },
+                        modifier = Modifier.size(toolbarHeight)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Redo,
+                            contentDescription = "Redo",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    val isSaved = textFieldValue.text == lastSavedContent
+                    IconButton(
+                        onClick = { if (!isSaved) onSave() },
+                        enabled = !isSaved,
+                        modifier = Modifier.size(toolbarHeight),
+                        colors = IconButtonDefaults.iconButtonColors(
+                            contentColor = if (isSaved) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary,
+                            disabledContentColor = MaterialTheme.colorScheme.outline
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.Save,
+                            contentDescription = "Save",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
             }
         }
     }
