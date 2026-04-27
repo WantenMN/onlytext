@@ -3,6 +3,8 @@ package org.wanten.onlytext.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -32,6 +34,7 @@ data class FileItem(
 fun FileListView(
     files: List<FileItem>,
     onFileClick: (FileItem) -> Unit,
+    onFileLongClick: (FileItem) -> Unit,
     scrollState: LazyListState,
     onScrollStateChange: (Int, Int) -> Unit = { _, _ -> },
     onStickyHeaderClick: ((FileItem) -> Unit)? = null,
@@ -75,7 +78,8 @@ fun FileListView(
             items(files, key = { it.path + it.level }) { file ->
                 FileListItem(
                     file = file,
-                    onClick = { onFileClick(file) }
+                    onClick = { onFileClick(file) },
+                    onLongClick = { onFileLongClick(file) }
                 )
             }
         }
@@ -118,10 +122,12 @@ fun FileListView(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FileListItem(
     file: FileItem,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val lineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
@@ -153,7 +159,10 @@ fun FileListItem(
                     )
                 }
             }
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .padding(start = (16 + file.level * 12).dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.wanten.onlytext.ui.components.FileContextMenu
 import org.wanten.onlytext.ui.components.FileItem
 import org.wanten.onlytext.ui.components.FileListView
 import org.wanten.onlytext.ui.state.ProjectState
@@ -40,6 +41,24 @@ fun FileManagerPage(
     val scope = rememberCoroutineScope()
     
     var isLoadingRoot by remember { mutableStateOf(false) }
+
+    var selectedFileForMenu by remember { mutableStateOf<FileItem?>(null) }
+
+    val allDirectories = remember(project.folderCache.size) {
+        val dirs = mutableListOf(FileItem("Root", true, "root", level = 0))
+        project.folderCache.values.flatten().filter { it.isDirectory }.forEach {
+            if (it.path != "root") dirs.add(it)
+        }
+        dirs.distinctBy { it.path }
+    }
+
+    val currentSiblings = remember(selectedFileForMenu, project.folderCache.size) {
+        if (selectedFileForMenu == null) emptyList<FileItem>()
+        else {
+            val parentPath = project.findParentPath(selectedFileForMenu!!.path) ?: "root"
+            project.folderCache[parentPath] ?: emptyList()
+        }
+    }
 
     val displayPath = remember(project.path) {
         val path = project.path
@@ -206,10 +225,34 @@ fun FileManagerPage(
                                 } else {
                                     onFileSelected(file)
                                 }
+                            },
+                            onFileLongClick = { file ->
+                                selectedFileForMenu = file
                             }
                         )
                     }
                 }
+            }
+
+            if (selectedFileForMenu != null) {
+                FileContextMenu(
+                    file = selectedFileForMenu!!,
+                    onDismissRequest = { selectedFileForMenu = null },
+                    onRename = { newName ->
+                        project.renameFile(context, selectedFileForMenu!!, newName, scope)
+                    },
+                    onCreateCopy = {
+                        project.copyFile(context, selectedFileForMenu!!, scope)
+                    },
+                    onMove = { targetPath ->
+                        project.moveFile(context, selectedFileForMenu!!, targetPath, scope)
+                    },
+                    onDelete = {
+                        project.deleteFile(context, selectedFileForMenu!!, scope)
+                    },
+                    allDirectories = allDirectories,
+                    currentSiblings = currentSiblings
+                )
             }
 
             // Bottom Toolbar

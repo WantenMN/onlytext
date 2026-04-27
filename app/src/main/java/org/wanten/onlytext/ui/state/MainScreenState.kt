@@ -14,7 +14,10 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
+import android.widget.Toast
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -204,6 +207,100 @@ class ProjectState(initialName: String) {
         }
         check("root")
         expandedFolders = reachable
+    }
+
+    fun renameFile(context: Context, file: FileItem, newName: String, scope: CoroutineScope) {
+        val treeUri = Uri.parse(path ?: return)
+        val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, file.path)
+        scope.launch(Dispatchers.IO) {
+            try {
+                DocumentsContract.renameDocument(context.contentResolver, documentUri, newName)
+                refreshParent(context, file.path)
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Rename failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun deleteFile(context: Context, file: FileItem, scope: CoroutineScope) {
+        val treeUri = Uri.parse(path ?: return)
+        val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, file.path)
+        scope.launch(Dispatchers.IO) {
+            try {
+                DocumentsContract.deleteDocument(context.contentResolver, documentUri)
+                refreshParent(context, file.path)
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Delete failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun copyFile(context: Context, file: FileItem, scope: CoroutineScope) {
+        val treeUri = Uri.parse(path ?: return)
+        val sourceUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, file.path)
+        val parentPath = findParentPath(file.path) ?: "root"
+        val parentId = if (parentPath == "root") DocumentsContract.getTreeDocumentId(treeUri) else parentPath
+        val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentId)
+        
+        scope.launch(Dispatchers.IO) {
+            try {
+                DocumentsContract.copyDocument(context.contentResolver, sourceUri, parentUri)
+                refreshFolder(context, parentPath)
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Copy failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun moveFile(context: Context, file: FileItem, targetParentPath: String, scope: CoroutineScope) {
+        val treeUri = Uri.parse(path ?: return)
+        val sourceUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, file.path)
+        val sourceParentPath = findParentPath(file.path) ?: "root"
+        val sourceParentId = if (sourceParentPath == "root") DocumentsContract.getTreeDocumentId(treeUri) else sourceParentPath
+        val sourceParentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, sourceParentId)
+        
+        val targetParentId = if (targetParentPath == "root") DocumentsContract.getTreeDocumentId(treeUri) else targetParentPath
+        val targetParentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, targetParentId)
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                DocumentsContract.moveDocument(context.contentResolver, sourceUri, sourceParentUri, targetParentUri)
+                refreshFolder(context, sourceParentPath)
+                refreshFolder(context, targetParentPath)
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Move failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun findParentPath(childPath: String): String? {
+        folderCache.forEach { (parentPath, children) ->
+            if (children.any { it.path == childPath }) return parentPath
+        }
+        return null
+    }
+
+    private suspend fun refreshParent(context: Context, childPath: String) {
+        val parentPath = findParentPath(childPath) ?: "root"
+        refreshFolder(context, parentPath)
+    }
+
+    private suspend fun refreshFolder(context: Context, folderPath: String) {
+        val treeUri = Uri.parse(path ?: return)
+        val docId = if (folderPath == "root") DocumentsContract.getTreeDocumentId(treeUri) else folderPath
+        val level = findLevel(this, docId)
+        val newChildren = fetchChildren(context, treeUri, docId, level)
+        withContext(Dispatchers.Main) {
+            folderCache[folderPath] = newChildren
+        }
     }
 }
 
