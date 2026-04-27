@@ -353,7 +353,7 @@ fun EditorPage(
             ) {
                 Column {
                     if (relativeFilePath != null) {
-                        Spacer(modifier = Modifier.height(with(density) { headerHeightPx.toDp() }))
+                        Spacer(modifier = Modifier.height(with(density) { headerHeightPx.toDp() } + 12.dp))
                     }
                     
                     Box {
