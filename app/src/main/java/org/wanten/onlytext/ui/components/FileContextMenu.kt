@@ -43,10 +43,7 @@ fun FileContextMenu(
     var currentMenu by remember { mutableStateOf(MenuState.MAIN) }
     
     val sheetState = rememberModalBottomSheetState(
-        skipPartiallyExpanded = true,
-        confirmValueChange = { 
-            if (currentMenu == MenuState.MOVE) false else true 
-        }
+        skipPartiallyExpanded = true
     )
 
     var targetMovePath by remember { mutableStateOf("") }
@@ -320,10 +317,14 @@ private fun MoveMenu(
     val filteredDirectories = remember(searchQuery, directories) {
         directories.filter { 
             val isNotSelfOrChild = it.path != file.path && !it.path.startsWith(file.path + "/")
-            isNotSelfOrChild && (
-                it.name.contains(searchQuery, ignoreCase = true) || 
-                simplifyPath(it.path, projectRootPath).contains(searchQuery, ignoreCase = true)
-            )
+            if (!isNotSelfOrChild) return@filter false
+            
+            if (searchQuery.isEmpty()) return@filter true
+            
+            val name = it.name
+            val path = simplifyPath(it.path, projectRootPath)
+            
+            fuzzyMatch(searchQuery, name) || fuzzyMatch(searchQuery, path)
         }
     }
 
@@ -462,6 +463,26 @@ private fun simplifyPath(path: String, rootPath: String?): String {
         }
     }
     return p
+}
+
+private fun fuzzyMatch(query: String, target: String): Boolean {
+    if (query.isEmpty()) return true
+    if (target.isEmpty()) return false
+    
+    var queryIdx = 0
+    var targetIdx = 0
+    
+    val lowerQuery = query.lowercase()
+    val lowerTarget = target.lowercase()
+    
+    while (queryIdx < lowerQuery.length && targetIdx < lowerTarget.length) {
+        if (lowerQuery[queryIdx] == lowerTarget[targetIdx]) {
+            queryIdx++
+        }
+        targetIdx++
+    }
+    
+    return queryIdx == lowerQuery.length
 }
 
 @Composable

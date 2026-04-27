@@ -24,6 +24,7 @@ import kotlinx.coroutines.withContext
 import org.wanten.onlytext.ui.components.FileContextMenu
 import org.wanten.onlytext.ui.components.FileItem
 import org.wanten.onlytext.ui.components.FileListView
+import org.wanten.onlytext.ui.state.GlobalDirectoryCache
 import org.wanten.onlytext.ui.state.ProjectState
 import org.wanten.onlytext.ui.state.ProjectType
 import org.wanten.onlytext.ui.state.fetchChildren
@@ -52,12 +53,20 @@ fun FileManagerPage(
         }
     }
 
-    val allDirectories = remember(project.folderCache.size) {
-        val dirs = mutableListOf(FileItem("Root", true, "root", level = 0))
-        project.folderCache.values.flatten().filter { it.isDirectory }.forEach {
-            if (it.path != "root") dirs.add(it)
+    val allDirectories by remember(project.path) {
+        derivedStateOf {
+            val dirs = mutableListOf(FileItem("Root", true, "root", level = 0))
+            
+            // Items from folder cache (already visited)
+            val fromCache = project.folderCache.values.flatten().filter { it.isDirectory }
+            // Items from global background scan
+            val fromGlobal = project.path?.let { GlobalDirectoryCache.cache[it] } ?: emptyList()
+            
+            (fromCache + fromGlobal).distinctBy { it.path }.forEach {
+                if (it.path != "root") dirs.add(it)
+            }
+            dirs.distinctBy { it.path }
         }
-        dirs.distinctBy { it.path }
     }
 
     val currentSiblings = remember(selectedFileForMenu, project.folderCache.size) {
@@ -79,6 +88,10 @@ fun FileManagerPage(
 
     LaunchedEffect(project.path, project.type) {
         if (project.path == null || project.type == ProjectType.NONE) return@LaunchedEffect
+        
+        // Start background scan for all directories
+        GlobalDirectoryCache.acquire(project.path!!, context)
+        
         if (project.folderCache.containsKey("root")) return@LaunchedEffect
 
         val uri = Uri.parse(project.path)
@@ -90,6 +103,15 @@ fun FileManagerPage(
             val rootChildren = fetchChildren(context, uri, rootId, 0)
             project.folderCache["root"] = rootChildren
             isLoadingRoot = false
+        }
+    }
+
+    DisposableEffect(project.path) {
+        val path = project.path
+        onDispose {
+            if (path != null) {
+                GlobalDirectoryCache.release(path)
+            }
         }
     }
 

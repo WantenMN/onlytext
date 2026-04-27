@@ -15,13 +15,12 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
 import android.widget.Toast
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 import org.wanten.onlytext.ui.components.FileItem
+import java.util.LinkedList
+import java.util.Queue
 
 suspend fun fetchChildren(context: Context, treeUri: Uri, documentId: String, level: Int): List<FileItem> = withContext(Dispatchers.IO) {
     val children = mutableListOf<FileItem>()
@@ -441,6 +440,76 @@ class ProjectState(initialName: String) {
         withContext(Dispatchers.Main) {
             folderCache[folderPath] = newChildren
         }
+    }
+}
+
+object GlobalDirectoryCache {
+    // rootPath -> List<FileItem>
+    val cache = mutableStateMapOf<String, List<FileItem>>()
+    private val useCount = mutableMapOf<String, Int>()
+    private val activeJobs = mutableMapOf<String, Job>()
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    fun acquire(rootPath: String, context: Context) {
+        val count = useCount.getOrDefault(rootPath, 0)
+        useCount[rootPath] = count + 1
+        
+        // If not in cache and not currently scanning, start a scan
+        if (!cache.containsKey(rootPath) && !activeJobs.containsKey(rootPath)) {
+            startScan(rootPath, context.applicationContext)
+        }
+    }
+
+    fun release(rootPath: String) {
+        val count = useCount.getOrDefault(rootPath, 0)
+        if (count <= 1) {
+            useCount.remove(rootPath)
+            cache.remove(rootPath)
+            activeJobs[rootPath]?.cancel()
+            activeJobs.remove(rootPath)
+        } else {
+            useCount[rootPath] = count - 1
+        }
+    }
+
+    private fun startScan(rootPath: String, context: Context) {
+        val job = scope.launch {
+            try {
+                val treeUri = Uri.parse(rootPath)
+                val rootId = DocumentsContract.getTreeDocumentId(treeUri)
+                val queue: Queue<Pair<String, Int>> = LinkedList()
+                // root children are level 0
+                queue.add(rootId to 0)
+                
+                while (queue.isNotEmpty()) {
+                    ensureActive()
+                    val (currentId, level) = queue.poll()!!
+                    val children = fetchChildren(context, treeUri, currentId, level)
+                    
+                    val newDirs = mutableListOf<FileItem>()
+                    for (child in children) {
+                        if (child.isDirectory) {
+                            newDirs.add(child)
+                            queue.add(child.path to level + 1)
+                        }
+                    }
+                    
+                    if (newDirs.isNotEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            val currentList = cache[rootPath] ?: emptyList()
+                            cache[rootPath] = currentList + newDirs
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Scan interrupted or failed
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main) {
+                    activeJobs.remove(rootPath)
+                }
+            }
+        }
+        activeJobs[rootPath] = job
     }
 }
 
