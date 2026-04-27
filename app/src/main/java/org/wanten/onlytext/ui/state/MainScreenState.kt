@@ -283,22 +283,38 @@ class ProjectState(initialName: String) {
                 val siblings = folderCache[parentPath] ?: emptyList()
                 val newName = generateCopyName(file.name, siblings)
                 
-                // We use manual copy because copyDocument doesn't let us specify the name easily
-                // and might not be supported.
                 if (file.isDirectory) {
-                    // Folder copy is complex in SAF, usually requires recursive creation.
-                    // For this task, we'll notify it's not supported or implement if needed.
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "Folder copy not supported yet", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Copying folder...", Toast.LENGTH_SHORT).show()
                     }
+                    recursiveCopyFolder(context, treeUri, file.path, parentUri, newName)
                 } else {
                     manualCopyFile(context, sourceUri, parentUri, newName)
-                    refreshFolder(context, parentPath)
+                }
+                refreshFolder(context, parentPath)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Copy finished", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(context, "Copy failed: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
+            }
+        }
+    }
+
+    private suspend fun recursiveCopyFolder(context: Context, treeUri: Uri, sourceFolderId: String, targetParentUri: Uri, newFolderName: String) {
+        val resolver = context.contentResolver
+        val newFolderUri = DocumentsContract.createDocument(resolver, targetParentUri, DocumentsContract.Document.MIME_TYPE_DIR, newFolderName) 
+            ?: throw Exception("Failed to create folder $newFolderName")
+        
+        val children = fetchChildren(context, treeUri, sourceFolderId, 0)
+        for (child in children) {
+            if (child.isDirectory) {
+                recursiveCopyFolder(context, treeUri, child.path, newFolderUri, child.name)
+            } else {
+                val childSourceUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, child.path)
+                manualCopyFile(context, childSourceUri, newFolderUri, child.name)
             }
         }
     }

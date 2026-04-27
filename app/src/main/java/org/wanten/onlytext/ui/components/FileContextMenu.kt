@@ -61,8 +61,12 @@ fun FileContextMenu(
                 file = file,
                 onRenameClick = { currentMenu = MenuState.RENAME },
                 onCreateCopyClick = {
-                    onCreateCopy()
-                    onDismissRequest()
+                    if (file.isDirectory) {
+                        currentMenu = MenuState.COPY_CONFIRM
+                    } else {
+                        onCreateCopy()
+                        onDismissRequest()
+                    }
                 },
                 onMoveClick = { currentMenu = MenuState.MOVE },
                 onDeleteClick = { currentMenu = MenuState.DELETE },
@@ -123,6 +127,14 @@ fun FileContextMenu(
                 },
                 onBack = { currentMenu = MenuState.MAIN }
             )
+            MenuState.COPY_CONFIRM -> CopyConfirmMenu(
+                fileName = file.name,
+                onConfirm = {
+                    onCreateCopy()
+                    onDismissRequest()
+                },
+                onBack = { currentMenu = MenuState.MAIN }
+            )
             MenuState.CONFLICT -> ConflictMenu(
                 fileName = file.name,
                 onReplace = {
@@ -140,7 +152,7 @@ fun FileContextMenu(
 }
 
 enum class MenuState {
-    MAIN, RENAME, MOVE, MOVE_CONFIRM, DELETE, CONFLICT, CREATE
+    MAIN, RENAME, MOVE, MOVE_CONFIRM, DELETE, CONFLICT, CREATE, COPY_CONFIRM
 }
 
 @Composable
@@ -582,6 +594,44 @@ fun CreateItemMenu(
                 enabled = isValid
             ) {
                 Text("Create")
+            }
+        }
+    }
+}
+
+@Composable
+private fun CopyConfirmMenu(
+    fileName: String,
+    onConfirm: () -> Unit,
+    onBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 16.dp)
+            .padding(bottom = 32.dp)
+    ) {
+        Text(
+            text = "Copy Folder",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Create a copy of \"$fileName\" and all its contents?",
+            style = MaterialTheme.typography.bodyLarge
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            TextButton(onClick = onBack) {
+                Text("Cancel")
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(onClick = onConfirm) {
+                Text("Copy")
             }
         }
     }
