@@ -56,7 +56,7 @@ fun FileListView(
             }
     }
 
-    val stickyParents by remember(files) {
+    val stickyParents by remember(files, scrollState) {
         derivedStateOf {
             val firstIndex = scrollState.firstVisibleItemIndex
             if (firstIndex < 0 || firstIndex >= files.size) return@derivedStateOf emptyList<FileItem>()
@@ -106,19 +106,23 @@ fun FileListView(
                 stickyParents.forEach { parent ->
                     FileListItem(
                         file = parent.copy(isExpanded = true),
-                        modifier = Modifier.clickable {
-                            if (onStickyHeaderClick != null) {
-                                onStickyHeaderClick(parent)
-                                // Auto-scroll the LazyColumn to this item to avoid visual jump
-                                scope.launch {
-                                    val index = files.indexOfFirst { it.path == parent.path }
-                                    if (index != -1) {
-                                        scrollState.scrollToItem(index)
+                        modifier = Modifier.pointerInput(parent.path) {
+                            detectTapGestures(
+                                onTap = {
+                                    if (onStickyHeaderClick != null) {
+                                        onStickyHeaderClick(parent)
+                                        // Auto-scroll the LazyColumn to this item to avoid visual jump
+                                        scope.launch {
+                                            val index = files.indexOfFirst { it.path == parent.path }
+                                            if (index != -1) {
+                                                scrollState.scrollToItem(index)
+                                            }
+                                        }
+                                    } else {
+                                        onFileClick(parent)
                                     }
                                 }
-                            } else {
-                                onFileClick(parent)
-                            }
+                            )
                         }
                     )
                 }
