@@ -46,6 +46,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.VerticalAlignBottom
+import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -110,6 +112,21 @@ private class StableEditorEditText(context: Context) : EditText(context) {
 
     init {
         addTextChangedListener(watcher)
+    }
+
+    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        super.onSelectionChanged(selStart, selEnd)
+        if (suppressChangeDispatch) return
+
+        onValueChanged?.invoke(
+            TextFieldValue(
+                text = text?.toString().orEmpty(),
+                selection = TextRange(
+                    selStart.coerceAtLeast(0),
+                    selEnd.coerceAtLeast(0)
+                )
+            )
+        )
     }
 
     override fun requestRectangleOnScreen(rectangle: Rect?): Boolean = false
@@ -401,7 +418,9 @@ fun EditorPage(
                                 val end = textFieldValue.selection.end.coerceIn(0, textFieldValue.text.length)
                                 val start = textFieldValue.selection.start.coerceIn(0, end)
                                 if (editText.selectionStart != start || editText.selectionEnd != end) {
+                                    editText.suppressChangeDispatch = true
                                     editText.setSelection(start, end)
+                                    editText.suppressChangeDispatch = false
                                 }
                             },
                             onRelease = { editText ->
@@ -489,6 +508,27 @@ fun EditorPage(
                     }
 
                     Spacer(modifier = Modifier.weight(1f))
+
+                    IconButton(
+                        onClick = { onValueChange(textFieldValue.copy(selection = TextRange(0))) },
+                        modifier = Modifier.size(toolbarHeight)
+                    ) {
+                        Icon(
+                            Icons.Default.VerticalAlignTop,
+                            contentDescription = "To Top",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = { onValueChange(textFieldValue.copy(selection = TextRange(textFieldValue.text.length))) },
+                        modifier = Modifier.size(toolbarHeight)
+                    ) {
+                        Icon(
+                            Icons.Default.VerticalAlignBottom,
+                            contentDescription = "To Bottom",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
 
                     val isSaved = textFieldValue.text == lastSavedContent
                     IconButton(
