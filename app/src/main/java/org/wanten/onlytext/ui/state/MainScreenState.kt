@@ -539,7 +539,49 @@ object GlobalDirectoryCache {
     }
 }
 
+class RecentFoldersManager {
+    var recentFolders by mutableStateOf<List<String>>(emptyList())
+
+    fun add(path: String) {
+        val current = recentFolders.toMutableList()
+        current.remove(path)
+        current.add(0, path)
+        recentFolders = current.take(20) // Limit to 20 recent folders
+    }
+
+    fun remove(path: String) {
+        recentFolders = recentFolders.filter { it != path }
+    }
+
+    fun clear() {
+        recentFolders = emptyList()
+    }
+
+    fun save(context: Context) {
+        val prefs = context.getSharedPreferences("onlytext_prefs", Context.MODE_PRIVATE)
+        val jsonArray = JSONArray(recentFolders)
+        prefs.edit().putString("recent_folders", jsonArray.toString()).apply()
+    }
+
+    fun load(context: Context) {
+        val prefs = context.getSharedPreferences("onlytext_prefs", Context.MODE_PRIVATE)
+        val jsonStr = prefs.getString("recent_folders", null)
+        if (jsonStr != null) {
+            try {
+                val jsonArray = JSONArray(jsonStr)
+                val folders = mutableListOf<String>()
+                for (i in 0 until jsonArray.length()) {
+                    folders.add(jsonArray.getString(i))
+                }
+                recentFolders = folders
+            } catch (e: Exception) {}
+        }
+    }
+}
+
 class MainScreenState {
+    val recentFoldersManager = RecentFoldersManager()
+
     // 2 Rows x 2 Columns of Editors
     val editors = listOf(
         listOf(EditorState(), EditorState()), // Row 0: Left, Right
@@ -559,6 +601,8 @@ class MainScreenState {
             .putInt("vPage", vPage)
             .apply()
         
+        recentFoldersManager.save(context)
+        
         for (r in 0..1) {
             for (c in 0..1) {
                 projects[r][c].save(context, "proj_${r}_${c}")
@@ -573,6 +617,8 @@ class MainScreenState {
         
         val hPage = prefs.getInt("hPage", -1)
         val vPage = prefs.getInt("vPage", -1)
+        
+        recentFoldersManager.load(context)
         
         for (r in 0..1) {
             for (c in 0..1) {

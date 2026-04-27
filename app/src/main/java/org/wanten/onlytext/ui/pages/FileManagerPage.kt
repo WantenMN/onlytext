@@ -29,15 +29,19 @@ import org.wanten.onlytext.ui.components.CreateItemMenu
 import org.wanten.onlytext.ui.components.FileContextMenu
 import org.wanten.onlytext.ui.components.FileItem
 import org.wanten.onlytext.ui.components.FileListView
+import org.wanten.onlytext.ui.components.RecentFoldersDialog
 import org.wanten.onlytext.ui.state.GlobalDirectoryCache
 import org.wanten.onlytext.ui.state.ProjectState
 import org.wanten.onlytext.ui.state.ProjectType
+import org.wanten.onlytext.ui.state.RecentFoldersManager
 import org.wanten.onlytext.ui.state.fetchChildren
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FileManagerPage(
     project: ProjectState,
+    recentFoldersManager: RecentFoldersManager,
+    onShowRecentFolders: (Boolean) -> Unit,
     onFileSelected: (FileItem) -> Unit,
     onOpenFolderClick: () -> Unit,
     onCloseFolderClick: () -> Unit,
@@ -72,6 +76,8 @@ fun FileManagerPage(
 
     LaunchedEffect(project.path, project.type) {
         if (project.path == null || project.type == ProjectType.NONE) return@LaunchedEffect
+        
+        recentFoldersManager.add(project.path!!)
         
         // Start background scan for all directories
         GlobalDirectoryCache.acquire(project.path!!, context)
@@ -210,6 +216,13 @@ fun FileManagerPage(
                                     modifier = Modifier.fillMaxWidth(0.8f)
                                 ) {
                                     Text("Open Folder")
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                TextButton(
+                                    onClick = { onShowRecentFolders(true) },
+                                    modifier = Modifier.fillMaxWidth(0.8f)
+                                ) {
+                                    Text("Recent Folders")
                                 }
                             }
                         } else {
@@ -494,6 +507,21 @@ fun FileManagerPage(
                                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
                             )
                             
+                            DropdownMenuItem(
+                                text = { 
+                                    Text(
+                                        "Recent Folders",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Medium
+                                    ) 
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    onShowRecentFolders(true)
+                                },
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                            )
+
                             val isFolderOpen = project.type != ProjectType.NONE
                             DropdownMenuItem(
                                 text = { 

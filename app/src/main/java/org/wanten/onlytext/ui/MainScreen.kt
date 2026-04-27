@@ -41,6 +41,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.wanten.onlytext.ui.components.FileItem
 import org.wanten.onlytext.ui.components.FileListView
+import org.wanten.onlytext.ui.components.RecentFoldersDialog
 import org.wanten.onlytext.ui.pages.EditorPage
 import org.wanten.onlytext.ui.pages.FileManagerPage
 import org.wanten.onlytext.ui.pages.ProjectWelcomePage
@@ -330,6 +331,8 @@ private fun RenderPageContent(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    var showRecentFolders by remember { mutableStateOf(false) }
+
     val projectIndex = if (actualCol == 0 || actualCol == 1) 0 else 1
     val project = state.projects[actualRow][projectIndex]
     val editor = state.editors[actualRow][projectIndex]
@@ -344,6 +347,7 @@ private fun RenderPageContent(
             project.type = ProjectType.DIRECTORY
             project.path = it.toString()
             project.activeFilePath = null
+            state.recentFoldersManager.add(it.toString())
 
             // Auto switch to FileManager
             scope.launch {
@@ -375,6 +379,8 @@ private fun RenderPageContent(
         0, 3 -> {
             FileManagerPage(
                 project = project,
+                recentFoldersManager = state.recentFoldersManager,
+                onShowRecentFolders = { showRecentFolders = it },
                 contentPadding = innerPadding,
                 onFileSelected = { fileItem ->
                     selectFile(fileItem)
@@ -392,6 +398,7 @@ private fun RenderPageContent(
                 WelcomePage(
                     editorIndex = project.projectName,
                     onOpenFolder = { openFolderLauncher.launch(null) },
+                    onShowRecentFolders = { showRecentFolders = true },
                     innerPadding = innerPadding
                 )
             } else if (project.activeFilePath == null) {
@@ -415,6 +422,37 @@ private fun RenderPageContent(
                 )
             }
         }
+    }
+
+    if (showRecentFolders) {
+        RecentFoldersDialog(
+            recentFolders = state.recentFoldersManager.recentFolders,
+            onFolderSelected = { path ->
+                state.recentFoldersManager.add(path)
+                state.recentFoldersManager.save(context)
+                project.type = ProjectType.DIRECTORY
+                project.path = path
+                project.activeFilePath = null
+                showRecentFolders = false
+
+                // If on Editor side, switch to File Manager
+                if (actualCol == 1 || actualCol == 2) {
+                    scope.launch {
+                        val targetPage = if (actualCol == 1) hPage - 1 else hPage + 1
+                        hPagerState.animateScrollToPage(targetPage)
+                    }
+                }
+            },
+            onRemoveFolder = { path ->
+                state.recentFoldersManager.remove(path)
+                state.recentFoldersManager.save(context)
+            },
+            onClearAll = {
+                state.recentFoldersManager.clear()
+                state.recentFoldersManager.save(context)
+            },
+            onDismissRequest = { showRecentFolders = false }
+        )
     }
 }
 

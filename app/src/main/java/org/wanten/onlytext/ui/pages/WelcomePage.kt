@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 fun WelcomePage(
     editorIndex: String,
     onOpenFolder: () -> Unit,
+    onShowRecentFolders: () -> Unit = {},
     modifier: Modifier = Modifier,
     innerPadding: PaddingValues = PaddingValues(0.dp)
 ) {
@@ -49,6 +50,13 @@ fun WelcomePage(
                 modifier = Modifier.fillMaxWidth(0.7f)
             ) {
                 Text("Open Folder")
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            TextButton(
+                onClick = onShowRecentFolders,
+                modifier = Modifier.fillMaxWidth(0.7f)
+            ) {
+                Text("Recent Folders")
             }
         }
     }
