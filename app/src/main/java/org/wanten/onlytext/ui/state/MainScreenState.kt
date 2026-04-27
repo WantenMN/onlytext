@@ -114,6 +114,7 @@ class ProjectState(initialName: String) {
     var path: String?
         get() = _path
         set(value) {
+            if (_path == value) return
             _path = value
             folderCache.clear()
             expandedFolders = emptySet()

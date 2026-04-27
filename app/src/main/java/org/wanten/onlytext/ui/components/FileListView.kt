@@ -106,23 +106,19 @@ fun FileListView(
                 stickyParents.forEach { parent ->
                     FileListItem(
                         file = parent.copy(isExpanded = true),
-                        modifier = Modifier.pointerInput(parent.path) {
-                            detectTapGestures(
-                                onTap = {
-                                    if (onStickyHeaderClick != null) {
-                                        onStickyHeaderClick(parent)
-                                        // Auto-scroll the LazyColumn to this item to avoid visual jump
-                                        scope.launch {
-                                            val index = files.indexOfFirst { it.path == parent.path }
-                                            if (index != -1) {
-                                                scrollState.scrollToItem(index)
-                                            }
-                                        }
-                                    } else {
-                                        onFileClick(parent)
+                        modifier = Modifier.clickable {
+                            if (onStickyHeaderClick != null) {
+                                onStickyHeaderClick(parent)
+                                // Auto-scroll the LazyColumn to this item to avoid visual jump
+                                scope.launch {
+                                    val index = files.indexOfFirst { it.path == parent.path }
+                                    if (index != -1) {
+                                        scrollState.scrollToItem(index)
                                     }
                                 }
-                            )
+                            } else {
+                                onFileClick(parent)
+                            }
                         }
                     )
                 }
