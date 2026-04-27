@@ -232,9 +232,10 @@ fun EditorPage(
     ) {
         val viewportHeightPx = with(density) { maxHeight.roundToPx() }
         val minScrollableHeight: Dp = maxHeight + 1.dp
+        val fallbackKeyboardHeightPx = (viewportHeightPx * 2f / 5f).toInt()
         val imeHeightPx = WindowInsets.ime.getBottom(density)
-        val bottomInsetPx = imeHeightPx
         val bottomPaddingPx = with(density) { innerPadding.calculateBottomPadding().roundToPx() }
+        val bottomInsetPx = maxOf(imeHeightPx, if (cachedKeyboardHeightPx > 0) cachedKeyboardHeightPx else fallbackKeyboardHeightPx)
         val toolbarHeight = 40.dp
         val safetyPaddingPx = with(density) { 24.dp.roundToPx() }
 
@@ -393,12 +394,7 @@ fun EditorPage(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .offset {
-                        val stableHeight = if (showToolbar && cachedKeyboardHeightPx > 0) {
-                            cachedKeyboardHeightPx
-                        } else {
-                            bottomInsetPx
-                        }
-                        IntOffset(0, -(stableHeight - bottomPaddingPx).coerceAtLeast(0))
+                        IntOffset(0, -(imeHeightPx - bottomPaddingPx).coerceAtLeast(0))
                     }
             ) {
                 Row(
