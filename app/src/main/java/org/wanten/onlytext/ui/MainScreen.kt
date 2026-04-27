@@ -297,6 +297,7 @@ fun MainScreen() {
     }
 }
 
+
 private fun findNearestAbsolutePageForRow(
     actualRow: Int,
     rowCount: Int,
@@ -413,12 +414,16 @@ private fun RenderPageContent(
                     innerPadding = innerPadding
                 )
             } else {
+                val relativePath = remember<String?>(project.path, project.activeFilePath, project.activeFileName) {
+                    calculateRelativePath(project)
+                }
                 EditorPage(
                     textFieldValue = editor.textFieldValue,
                     onValueChange = { editor.textFieldValue = it },
                     innerPadding = innerPadding,
                     focusRequester = editor.focusRequester,
                     scrollState = editor.scrollState,
+                    relativeFilePath = relativePath,
                     lastSavedContent = editor.lastSavedContent,
                     onSave = {
                         project.activeFilePath?.let { uriStr ->
@@ -607,3 +612,29 @@ fun Modifier.twoFingerVerticalScroll(
         }
     }
 }
+
+private fun calculateRelativePath(project: ProjectState): String? {
+    val treeUriStr = project.path ?: return project.activeFileName
+    val docUriStr = project.activeFilePath ?: return project.activeFileName
+    
+    return try {
+        val treeUri = Uri.parse(treeUriStr)
+        val docUri = Uri.parse(docUriStr)
+        
+        val treeId = DocumentsContract.getTreeDocumentId(treeUri)
+        val docId = DocumentsContract.getDocumentId(docUri)
+        
+        if (docId.startsWith(treeId)) {
+            var relative = docId.substring(treeId.length)
+            while (relative.startsWith("/") || relative.startsWith(":")) {
+                relative = relative.substring(1)
+            }
+            if (relative.isEmpty()) project.activeFileName else relative
+        } else {
+            project.activeFileName
+        }
+    } catch (e: Exception) {
+        project.activeFileName
+    }
+}
+

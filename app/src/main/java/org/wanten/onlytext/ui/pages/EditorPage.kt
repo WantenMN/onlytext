@@ -20,12 +20,15 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -56,6 +59,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -66,6 +70,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -152,6 +157,7 @@ fun EditorPage(
     focusRequester: androidx.compose.ui.focus.FocusRequester,
     scrollState: ScrollState,
     modifier: Modifier = Modifier,
+    relativeFilePath: String? = null,
     lastSavedContent: String = "",
     onSave: () -> Unit = {}
 ) {
@@ -175,6 +181,24 @@ fun EditorPage(
     var isShowAnimation by remember { mutableStateOf(false) }
     var editorView by remember { mutableStateOf<StableEditorEditText?>(null) }
     var isEditorFocused by remember { mutableStateOf(false) }
+
+    var isPathHeaderVisible by remember { mutableStateOf(true) }
+    var lastScrollValue by remember { mutableIntStateOf(scrollState.value) }
+    var headerHeightPx by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(relativeFilePath) {
+        isPathHeaderVisible = true
+    }
+
+    LaunchedEffect(scrollState.value) {
+        val currentScroll = scrollState.value
+        if (currentScroll > lastScrollValue && currentScroll > 50) {
+            isPathHeaderVisible = false
+        } else if (currentScroll < lastScrollValue) {
+            isPathHeaderVisible = true
+        }
+        lastScrollValue = currentScroll
+    }
 
     LaunchedEffect(view) {
         isImeVisible = ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.ime()) == true
@@ -310,81 +334,116 @@ fun EditorPage(
                     .heightIn(min = minScrollableHeight)
                     .padding(bottom = with(density) { bottomInsetPx.toDp() } + toolbarPadding)
             ) {
-            if (textFieldValue.text.isEmpty()) {
-                Text(
-                    text = "Start typing...",
-                    color = Color(hintColor),
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                )
-            }
-
-            AndroidView(
-                modifier = Modifier.fillMaxWidth(),
-                factory = { ctx ->
-                    StableEditorEditText(ctx).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                        )
-                        minLines = 1
-                        maxLines = Int.MAX_VALUE
-                        gravity = Gravity.TOP or Gravity.START
-                        background = null
-                        setTextColor(textColor)
-                        setHintTextColor(hintColor)
-                        textSize = 18f
-                        setPadding(
-                            with(density) { 16.dp.roundToPx() },
-                            with(density) { 12.dp.roundToPx() },
-                            with(density) { 16.dp.roundToPx() },
-                            with(density) { 12.dp.roundToPx() }
-                        )
-                        inputType = InputType.TYPE_CLASS_TEXT or
-                            InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                            InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
-                            InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
-                        isSingleLine = false
-                        setHorizontallyScrolling(false)
-                        overScrollMode = EditText.OVER_SCROLL_NEVER
-                        setOnFocusChangeListener { _, hasFocus ->
-                            isEditorFocused = hasFocus
+                Column {
+                    if (relativeFilePath != null) {
+                        Spacer(modifier = Modifier.height(with(density) { headerHeightPx.toDp() }))
+                    }
+                    
+                    Box {
+                        if (textFieldValue.text.isEmpty()) {
+                            Text(
+                                text = "Start typing...",
+                                color = Color(hintColor),
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                            )
                         }
-                        ViewCompat.setWindowInsetsAnimationCallback(this, imeAnimationCallback)
-                        editorView = this
-                    }
-                },
-                update = { editText ->
-                    editorView = editText
-                    isEditorFocused = editText.hasFocus()
-                    editText.onValueChanged = { next ->
-                        if (next != textFieldValue) {
-                            onValueChange(next)
-                        }
-                    }
-                    if (editText.text?.toString() != textFieldValue.text) {
-                        editText.suppressChangeDispatch = true
-                        editText.setText(textFieldValue.text)
-                        editText.suppressChangeDispatch = false
-                    }
 
-                    val end = textFieldValue.selection.end.coerceIn(0, textFieldValue.text.length)
-                    val start = textFieldValue.selection.start.coerceIn(0, end)
-                    if (editText.selectionStart != start || editText.selectionEnd != end) {
-                        editText.setSelection(start, end)
-                    }
-                },
-                onRelease = { editText ->
-                    ViewCompat.setWindowInsetsAnimationCallback(editText, null)
-                    editText.onValueChanged = null
-                    if (editorView === editText) {
-                        isEditorFocused = false
-                    }
-                    if (editorView === editText) {
-                        editorView = null
+                        AndroidView(
+                            modifier = Modifier.fillMaxWidth(),
+                            factory = { ctx ->
+                                StableEditorEditText(ctx).apply {
+                                    layoutParams = FrameLayout.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.WRAP_CONTENT
+                                    )
+                                    minLines = 1
+                                    maxLines = Int.MAX_VALUE
+                                    gravity = Gravity.TOP or Gravity.START
+                                    background = null
+                                    setTextColor(textColor)
+                                    setHintTextColor(hintColor)
+                                    textSize = 18f
+                                    setPadding(
+                                        with(density) { 16.dp.roundToPx() },
+                                        with(density) { 12.dp.roundToPx() },
+                                        with(density) { 16.dp.roundToPx() },
+                                        with(density) { 12.dp.roundToPx() }
+                                    )
+                                    inputType = InputType.TYPE_CLASS_TEXT or
+                                        InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                                        InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+                                        InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
+                                    isSingleLine = false
+                                    setHorizontallyScrolling(false)
+                                    overScrollMode = EditText.OVER_SCROLL_NEVER
+                                    setOnFocusChangeListener { _, hasFocus ->
+                                        isEditorFocused = hasFocus
+                                    }
+                                    ViewCompat.setWindowInsetsAnimationCallback(this, imeAnimationCallback)
+                                    editorView = this
+                                }
+                            },
+                            update = { editText ->
+                                editorView = editText
+                                isEditorFocused = editText.hasFocus()
+                                editText.onValueChanged = { next ->
+                                    if (next != textFieldValue) {
+                                        onValueChange(next)
+                                    }
+                                }
+                                if (editText.text?.toString() != textFieldValue.text) {
+                                    editText.suppressChangeDispatch = true
+                                    editText.setText(textFieldValue.text)
+                                    editText.suppressChangeDispatch = false
+                                }
+
+                                val end = textFieldValue.selection.end.coerceIn(0, textFieldValue.text.length)
+                                val start = textFieldValue.selection.start.coerceIn(0, end)
+                                if (editText.selectionStart != start || editText.selectionEnd != end) {
+                                    editText.setSelection(start, end)
+                                }
+                            },
+                            onRelease = { editText ->
+                                ViewCompat.setWindowInsetsAnimationCallback(editText, null)
+                                editText.onValueChanged = null
+                                if (editorView === editText) {
+                                    isEditorFocused = false
+                                }
+                                if (editorView === editText) {
+                                    editorView = null
+                                }
+                            }
+                        )
                     }
                 }
-            )
+            }
+
+            if (relativeFilePath != null) {
+                AnimatedVisibility(
+                    visible = isPathHeaderVisible,
+                    enter = slideInVertically { -it } + fadeIn(),
+                    exit = slideOutVertically { -it } + fadeOut(),
+                    modifier = Modifier.align(Alignment.TopCenter)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 32.dp)
+                            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.9f))
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .onGloballyPositioned { coordinates ->
+                                headerHeightPx = coordinates.size.height
+                            },
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Text(
+                            text = relativeFilePath,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             AnimatedVisibility(
