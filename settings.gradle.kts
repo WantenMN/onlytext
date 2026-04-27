@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Onlytext"
+rootProject.name = "OnlyText"
 include(":app")

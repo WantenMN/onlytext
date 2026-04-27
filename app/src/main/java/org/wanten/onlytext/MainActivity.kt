@@ -5,14 +5,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import org.wanten.onlytext.ui.MainScreen
-import org.wanten.onlytext.ui.theme.OnlytextTheme
+import org.wanten.onlytext.ui.theme.OnlyTextTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            OnlytextTheme {
+            OnlyTextTheme {
                 MainScreen()
             }
         }
