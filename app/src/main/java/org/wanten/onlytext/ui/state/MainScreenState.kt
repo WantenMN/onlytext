@@ -64,7 +64,7 @@ class EditorState {
     var textFieldValue by mutableStateOf(TextFieldValue(""))
     var lastSavedContent by mutableStateOf("")
     val focusRequester = FocusRequester()
-    val scrollState = ScrollState(0)
+    var scrollState by mutableStateOf(ScrollState(0))
 
     fun save(context: Context, keyPrefix: String) {
         val prefs = context.getSharedPreferences("onlytext_prefs", Context.MODE_PRIVATE)
@@ -84,9 +84,7 @@ class EditorState {
         val scroll = prefs.getInt("${keyPrefix}_scroll", 0)
         textFieldValue = TextFieldValue(text, TextRange(selStart, selEnd))
         lastSavedContent = text
-        // Note: scrollState.scrollTo is a suspend function, we can't call it here easily
-        // but it will be picked up if we use the same object. 
-        // For fresh load, we might need a better way.
+        scrollState = ScrollState(scroll)
     }
 }
 
@@ -102,7 +100,7 @@ class ProjectState(initialName: String) {
     var activeFileName by mutableStateOf<String?>(null)
     var lastModified by mutableLongStateOf(0L)
     
-    val lazyListState = LazyListState()
+    var lazyListState by mutableStateOf(LazyListState())
 
     private var _path by mutableStateOf<String?>(null)
     var path: String?
@@ -113,6 +111,7 @@ class ProjectState(initialName: String) {
             expandedFolders = emptySet()
             scrollIndex = 0
             scrollOffset = 0
+            lazyListState = LazyListState(0, 0)
             isRecursiveExpanding = false
         }
     
@@ -167,6 +166,7 @@ class ProjectState(initialName: String) {
         expandedFolders = prefs.getStringSet("${keyPrefix}_expandedFolders", emptySet()) ?: emptySet()
         scrollIndex = prefs.getInt("${keyPrefix}_scrollIndex", 0)
         scrollOffset = prefs.getInt("${keyPrefix}_scrollOffset", 0)
+        lazyListState = LazyListState(scrollIndex, scrollOffset)
         
         val cacheStr = prefs.getString("${keyPrefix}_folderCache", null)
         if (cacheStr != null) {

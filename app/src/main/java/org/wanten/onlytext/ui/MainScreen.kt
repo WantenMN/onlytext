@@ -8,6 +8,7 @@ import android.os.Looper
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -101,6 +102,7 @@ fun MainScreen() {
 
     // Persistence logic
     LaunchedEffect(hPagerState.currentPage, vPagerState.currentPage) {
+        delay(500)
         state.save(context, hPagerState.currentPage, vPagerState.currentPage)
     }
 
@@ -115,8 +117,9 @@ fun MainScreen() {
             LaunchedEffect(
                 project.type, project.path, project.activeFilePath,
                 project.expandedFolders, project.scrollIndex, project.scrollOffset,
-                editor.textFieldValue
+                editor.textFieldValue, editor.scrollState.value
             ) {
+                delay(500)
                 state.save(context, hPagerState.currentPage, vPagerState.currentPage)
             }
 
@@ -457,7 +460,10 @@ private fun loadFileContent(context: android.content.Context, project: ProjectSt
 
         if (!isText) return false
 
-        project.activeFilePath = uri.toString()
+        if (project.activeFilePath != uri.toString()) {
+            project.activeFilePath = uri.toString()
+            editor.scrollState = ScrollState(0)
+        }
         
         context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
