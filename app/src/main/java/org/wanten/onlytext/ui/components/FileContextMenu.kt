@@ -5,16 +5,25 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.text.SimpleDateFormat
+import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -25,19 +34,29 @@ fun FileContextMenu(
     onCreateCopy: () -> Unit,
     onMove: (String) -> Unit, // Path to move to
     onDelete: () -> Unit,
+    onCreateNew: (String, Boolean) -> Unit, // Name, isDirectory
     allDirectories: List<FileItem> = emptyList(), // For move operation
-    currentSiblings: List<FileItem> = emptyList() // For rename validation
+    currentSiblings: List<FileItem> = emptyList(), // For rename validation
+    projectRootPath: String? = null,
+    actualParentPath: String? = null
 ) {
-    val sheetState = rememberModalBottomSheetState()
     var currentMenu by remember { mutableStateOf(MenuState.MAIN) }
+    
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { 
+            if (currentMenu == MenuState.MOVE) false else true 
+        }
+    )
 
     var targetMovePath by remember { mutableStateOf("") }
-    var conflictTargetName by remember { mutableStateOf("") }
+    var targetMoveName by remember { mutableStateOf("") }
+    var isCreatingDirectory by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
-        dragHandle = { BottomSheetDefaults.DragHandle() }
+        dragHandle = { if (currentMenu == MenuState.MAIN) BottomSheetDefaults.DragHandle() }
     ) {
         when (currentMenu) {
             MenuState.MAIN -> MainMenu(
@@ -48,7 +67,15 @@ fun FileContextMenu(
                     onDismissRequest()
                 },
                 onMoveClick = { currentMenu = MenuState.MOVE },
-                onDeleteClick = { currentMenu = MenuState.DELETE }
+                onDeleteClick = { currentMenu = MenuState.DELETE },
+                onCreateFileClick = {
+                    isCreatingDirectory = false
+                    currentMenu = MenuState.CREATE
+                },
+                onCreateFolderClick = {
+                    isCreatingDirectory = true
+                    currentMenu = MenuState.CREATE
+                }
             )
             MenuState.RENAME -> RenameMenu(
                 file = file,
@@ -62,13 +89,29 @@ fun FileContextMenu(
             MenuState.MOVE -> MoveMenu(
                 file = file,
                 directories = allDirectories,
-                onConfirm = { targetPath ->
+                projectRootPath = projectRootPath,
+                onConfirm = { targetPath, targetName ->
                     targetMovePath = targetPath
-                    // In a real app, we'd check for conflicts here. 
-                    // For this task, I'll simulate or just call onMove.
-                    // To show the conflict UI, I'll just proceed to onMove 
-                    // unless I want to implement the check here.
-                    onMove(targetPath)
+                    targetMoveName = targetName
+                    currentMenu = MenuState.MOVE_CONFIRM
+                },
+                onBack = { currentMenu = MenuState.MAIN }
+            )
+            MenuState.MOVE_CONFIRM -> MoveConfirmMenu(
+                fileName = file.name,
+                targetName = targetMoveName,
+                onConfirm = {
+                    onMove(targetMovePath)
+                    onDismissRequest()
+                },
+                onBack = { currentMenu = MenuState.MOVE }
+            )
+            MenuState.CREATE -> CreateItemMenu(
+                isDirectory = isCreatingDirectory,
+                targetPath = actualParentPath ?: (projectRootPath ?: "root"),
+                projectRootPath = projectRootPath,
+                onConfirm = { name ->
+                    onCreateNew(name, isCreatingDirectory)
                     onDismissRequest()
                 },
                 onBack = { currentMenu = MenuState.MAIN }
@@ -84,13 +127,11 @@ fun FileContextMenu(
             MenuState.CONFLICT -> ConflictMenu(
                 fileName = file.name,
                 onReplace = {
-                    // Logic for replace would go here
                     onMove(targetMovePath)
                     onDismissRequest()
                 },
                 onAddSuffix = {
-                    // Logic for add suffix would go here
-                    onMove(targetMovePath) // Should be modified with suffix
+                    onMove(targetMovePath)
                     onDismissRequest()
                 },
                 onCancel = { currentMenu = MenuState.MOVE }
@@ -100,7 +141,7 @@ fun FileContextMenu(
 }
 
 enum class MenuState {
-    MAIN, RENAME, MOVE, DELETE, CONFLICT
+    MAIN, RENAME, MOVE, MOVE_CONFIRM, DELETE, CONFLICT, CREATE
 }
 
 @Composable
@@ -109,7 +150,9 @@ private fun MainMenu(
     onRenameClick: () -> Unit,
     onCreateCopyClick: () -> Unit,
     onMoveClick: () -> Unit,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    onCreateFileClick: () -> Unit,
+    onCreateFolderClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -127,19 +170,38 @@ private fun MainMenu(
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
-            Text(
-                text = if (file.isDirectory) "Folder" else "File",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            // Could add more meta info here if available
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (file.isDirectory) "Folder" else "File",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+                if (!file.isDirectory) {
+                    Text(
+                        text = " • ${formatSize(file.size)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (file.lastModified > 0) {
+                Text(
+                    text = "Last Modified: ${formatDate(file.lastModified)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
+        MenuItem(icon = Icons.Default.Add, text = "New File", onClick = onCreateFileClick)
+        MenuItem(icon = Icons.Default.CreateNewFolder, text = "New Folder", onClick = onCreateFolderClick)
         MenuItem(icon = Icons.Default.Edit, text = "Rename", onClick = onRenameClick)
         MenuItem(icon = Icons.Default.ContentCopy, text = "Create Copy", onClick = onCreateCopyClick)
-        MenuItem(icon = Icons.AutoMirrored.Filled.DriveFileMove, text = "Move", onClick = onMoveClick)
+        MenuItem(icon = Icons.AutoMirrored.Filled.DriveFileMove, text = "Move to...", onClick = onMoveClick)
         MenuItem(icon = Icons.Default.Delete, text = "Delete", onClick = onDeleteClick, isDestructive = true)
     }
 }
@@ -182,8 +244,16 @@ private fun RenameMenu(
     onConfirm: (String) -> Unit,
     onBack: () -> Unit
 ) {
-    var newName by remember { mutableStateOf(file.name) }
+    var textFieldValue by remember { 
+        mutableStateOf(TextFieldValue(file.name, TextRange(file.name.length))) 
+    }
+    val focusRequester = remember { FocusRequester() }
     
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+    
+    val newName = textFieldValue.text
     val isAlreadyExists = remember(newName) {
         siblings.any { it.name == newName && it.path != file.path }
     }
@@ -205,9 +275,9 @@ private fun RenameMenu(
         )
         Spacer(modifier = Modifier.height(16.dp))
         OutlinedTextField(
-            value = newName,
-            onValueChange = { newName = it },
-            modifier = Modifier.fillMaxWidth(),
+            value = textFieldValue,
+            onValueChange = { textFieldValue = it },
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
             label = { Text("New Name") },
             singleLine = true,
             isError = isAlreadyExists || (isIllegal && newName.isNotBlank()),
@@ -242,57 +312,218 @@ private fun RenameMenu(
 private fun MoveMenu(
     file: FileItem,
     directories: List<FileItem>,
-    onConfirm: (String) -> Unit,
+    projectRootPath: String?,
+    onConfirm: (String, String) -> Unit,
     onBack: () -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
     val filteredDirectories = remember(searchQuery, directories) {
-        directories.filter { it.name.contains(searchQuery, ignoreCase = true) && it.path != file.path }
+        directories.filter { 
+            val isNotSelfOrChild = it.path != file.path && !it.path.startsWith(file.path + "/")
+            isNotSelfOrChild && (
+                it.name.contains(searchQuery, ignoreCase = true) || 
+                simplifyPath(it.path, projectRootPath).contains(searchQuery, ignoreCase = true)
+            )
+        }
     }
+
+    val configuration = LocalConfiguration.current
+    val screenHeight = configuration.screenHeightDp.dp
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = 500.dp)
-            .padding(horizontal = 24.dp, vertical = 16.dp)
-            .padding(bottom = 32.dp)
+            .height(screenHeight * 0.8f) // Fixed height ratio
+            .padding(bottom = 16.dp)
     ) {
-        Text(
-            text = "Move to",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("Search folders...") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            singleLine = true
-        )
-        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Text(
+                text = "Move to",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
         ) {
             items(filteredDirectories) { dir ->
+                val displayPath = simplifyPath(dir.path, projectRootPath)
+                
                 ListItem(
                     headlineContent = { Text(dir.name) },
-                    supportingContent = { Text(dir.path, maxLines = 1) },
-                    leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
-                    modifier = Modifier.clickable { onConfirm(dir.path) }
+                    supportingContent = { 
+                        Text(displayPath, maxLines = 1) 
+                    },
+                    leadingContent = { Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                    modifier = Modifier.clickable { onConfirm(dir.path, dir.name) }
                 )
             }
         }
+
+        // Search bar with better margins and rounded corners
+        TextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp), // Clear margins
+            placeholder = { Text("Search folders...") },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Default.Close, contentDescription = "Clear")
+                    }
+                }
+            },
+            singleLine = true,
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = TextFieldDefaults.colors(
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+                disabledIndicatorColor = Color.Transparent,
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+        )
+    }
+}
+
+@Composable
+private fun MoveConfirmMenu(
+    fileName: String,
+    targetName: String,
+    onConfirm: () -> Unit,
+    onBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 16.dp)
+            .padding(bottom = 32.dp)
+    ) {
+        Text(
+            text = "Confirm Move",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
         Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Move \"$fileName\" to \"$targetName\"?",
+            style = MaterialTheme.typography.bodyLarge
+        )
+        Spacer(modifier = Modifier.height(24.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End
         ) {
             TextButton(onClick = onBack) {
-                Text("Back")
+                Text("Cancel")
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(onClick = onConfirm) {
+                Text("Move")
+            }
+        }
+    }
+}
+
+private fun formatSize(size: Long): String {
+    if (size <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
+    return String.format(Locale.US, "%.1f %s", size / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
+}
+
+private fun formatDate(timestamp: Long): String {
+    val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    return sdf.format(Date(timestamp))
+}
+
+private fun simplifyPath(path: String, rootPath: String?): String {
+    var p = path.replace("primary:", "")
+    if (rootPath != null) {
+        val rootP = rootPath.replace("primary:", "")
+        if (p.startsWith(rootP)) {
+            p = p.substring(rootP.length)
+            if (p.startsWith("/")) p = p.substring(1)
+            if (p.isEmpty()) return "Project Root"
+        }
+    }
+    return p
+}
+
+@Composable
+private fun CreateItemMenu(
+    isDirectory: Boolean,
+    targetPath: String,
+    projectRootPath: String?,
+    onConfirm: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    // Initial name is Untitled.txt, but user can delete extension as requested
+    val initialName = if (isDirectory) "Untitled" else "Untitled.txt"
+    var textFieldValue by remember { 
+        mutableStateOf(TextFieldValue(initialName, TextRange(0, initialName.length))) 
+    }
+    val focusRequester = remember { FocusRequester() }
+    
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
+    val displayPath = simplifyPath(targetPath, projectRootPath)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 16.dp)
+            .padding(bottom = 32.dp)
+    ) {
+        Text(
+            text = if (isDirectory) "New Folder" else "New File",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Target: $displayPath",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        OutlinedTextField(
+            value = textFieldValue,
+            onValueChange = { textFieldValue = it },
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+            label = { Text("Name") },
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            TextButton(onClick = onBack) {
+                Text("Cancel")
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(
+                onClick = { onConfirm(textFieldValue.text) },
+                enabled = textFieldValue.text.isNotBlank()
+            ) {
+                Text("Create")
             }
         }
     }

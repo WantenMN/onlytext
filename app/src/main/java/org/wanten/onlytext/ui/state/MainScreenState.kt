@@ -32,21 +32,27 @@ suspend fun fetchChildren(context: Context, treeUri: Uri, documentId: String, le
             arrayOf(
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                 DocumentsContract.Document.COLUMN_MIME_TYPE,
-                DocumentsContract.Document.COLUMN_DOCUMENT_ID
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED
             ),
             null, null, null
         )?.use { cursor ->
             val nameIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
             val mimeIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
             val idIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            val sizeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+            val modifiedIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
 
             while (cursor.moveToNext()) {
                 val name = cursor.getString(nameIndex)
                 val mime = cursor.getString(mimeIndex)
                 val id = cursor.getString(idIndex)
+                val size = if (sizeIndex != -1) cursor.getLong(sizeIndex) else 0L
+                val lastModified = if (modifiedIndex != -1) cursor.getLong(modifiedIndex) else 0L
                 val isDir = mime == DocumentsContract.Document.MIME_TYPE_DIR
                 
-                children.add(FileItem(name, isDir, id, level = level))
+                children.add(FileItem(name, isDir, id, level = level, size = size, lastModified = lastModified))
             }
         }
     } catch (e: Exception) {
@@ -55,8 +61,8 @@ suspend fun fetchChildren(context: Context, treeUri: Uri, documentId: String, le
     children.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
 }
 
-fun findLevel(project: ProjectState, docId: String): Int {
-    if (docId == "root") return 0
+    fun findLevel(project: ProjectState, docId: String): Int {
+    if (docId == "root") return -1 // Root children are level 0, so root itself is -1
     project.folderCache.values.forEach { list ->
         list.find { it.path == docId }?.let { return it.level }
     }
@@ -151,6 +157,8 @@ class ProjectState(initialName: String) {
                 itemObj.put("d", item.isDirectory)
                 itemObj.put("p", item.path)
                 itemObj.put("l", item.level)
+                itemObj.put("s", item.size)
+                itemObj.put("m", item.lastModified)
                 array.put(itemObj)
             }
             cacheObj.put(key, array)
@@ -184,7 +192,9 @@ class ProjectState(initialName: String) {
                             name = itemObj.getString("n"),
                             isDirectory = itemObj.getBoolean("d"),
                             path = itemObj.getString("p"),
-                            level = itemObj.getInt("l") // Fix key to match save
+                            level = itemObj.getInt("l"),
+                            size = itemObj.optLong("s", 0L),
+                            lastModified = itemObj.optLong("m", 0L)
                         ))
                     }
                     folderCache[key] = items
@@ -227,13 +237,36 @@ class ProjectState(initialName: String) {
     fun deleteFile(context: Context, file: FileItem, scope: CoroutineScope) {
         val treeUri = Uri.parse(path ?: return)
         val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, file.path)
+        val parentPath = findParentPath(file.path) ?: "root"
+        
         scope.launch(Dispatchers.IO) {
             try {
+                // Optimistically remove from UI
+                withContext(Dispatchers.Main) {
+                    val currentList = folderCache[parentPath]
+                    if (currentList != null) {
+                        folderCache[parentPath] = currentList.filter { it.path != file.path }
+                    }
+                    
+                    // Auto-close editor if deleted file (or its parent folder) is currently open
+                    val currentOpen = activeFilePath
+                    if (currentOpen != null) {
+                        val isOpenUri = Uri.parse(currentOpen)
+                        val openDocId = DocumentsContract.getDocumentId(isOpenUri)
+                        if (openDocId == file.path || openDocId.startsWith(file.path + "/")) {
+                            activeFilePath = null
+                            activeFileName = null
+                        }
+                    }
+                }
+                
                 DocumentsContract.deleteDocument(context.contentResolver, documentUri)
-                refreshParent(context, file.path)
+                // Truly refresh to be sure
+                refreshFolder(context, parentPath)
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(context, "Delete failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                    refreshFolder(context, parentPath) // Revert UI if possible
                 }
             }
         }
@@ -248,12 +281,119 @@ class ProjectState(initialName: String) {
         
         scope.launch(Dispatchers.IO) {
             try {
-                DocumentsContract.copyDocument(context.contentResolver, sourceUri, parentUri)
-                refreshFolder(context, parentPath)
+                val siblings = folderCache[parentPath] ?: emptyList()
+                val newName = generateCopyName(file.name, siblings)
+                
+                // We use manual copy because copyDocument doesn't let us specify the name easily
+                // and might not be supported.
+                if (file.isDirectory) {
+                    // Folder copy is complex in SAF, usually requires recursive creation.
+                    // For this task, we'll notify it's not supported or implement if needed.
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Folder copy not supported yet", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    manualCopyFile(context, sourceUri, parentUri, newName)
+                    refreshFolder(context, parentPath)
+                }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(context, "Copy failed: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
+            }
+        }
+    }
+
+    private fun generateCopyName(originalName: String, siblings: List<FileItem>): String {
+        val (base, ext) = splitFileName(originalName)
+        
+        // Remove existing " copy X" suffix if present to find the "true" base
+        val copyRegex = Regex("(.+?) copy( \\d+)?$")
+        val match = copyRegex.find(base)
+        val trueBase = match?.groupValues?.get(1) ?: base
+
+        var candidate = "$trueBase copy$ext"
+        if (siblings.none { it.name == candidate }) return candidate
+
+        var i = 1
+        while (true) {
+            candidate = "$trueBase copy $i$ext"
+            if (siblings.none { it.name == candidate }) return candidate
+            i++
+        }
+    }
+
+    private fun splitFileName(name: String): Pair<String, String> {
+        if (name.startsWith(".") && !name.substring(1).contains(".")) {
+            return name to "" // e.g. .gitignore
+        }
+        val lastDot = name.lastIndexOf(".")
+        if (lastDot <= 0) return name to ""
+        return name.substring(0, lastDot) to name.substring(lastDot)
+    }
+
+    fun createFile(context: Context, parentPath: String, name: String, isDirectory: Boolean, scope: CoroutineScope, onSuccess: (FileItem) -> Unit = {}) {
+        val treeUri = Uri.parse(path ?: return)
+        val parentId = if (parentPath == "root") DocumentsContract.getTreeDocumentId(treeUri) else parentPath
+        val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentId)
+        
+        scope.launch(Dispatchers.IO) {
+            try {
+                val resolver = context.contentResolver
+                val mimeType = if (isDirectory) {
+                    DocumentsContract.Document.MIME_TYPE_DIR
+                } else if (name.contains(".")) {
+                    when (name.substringAfterLast(".").lowercase()) {
+                        "txt" -> "text/plain"
+                        "md" -> "text/markdown"
+                        else -> "application/octet-stream"
+                    }
+                } else {
+                    "application/octet-stream"
+                }
+
+                val resultUri = DocumentsContract.createDocument(resolver, parentUri, mimeType, name)
+                if (resultUri != null) {
+                    val docId = DocumentsContract.getDocumentId(resultUri)
+                    val level = if (parentPath == "root") 0 else findLevel(this@ProjectState, parentPath) + 1
+                    val newItem = FileItem(name, isDirectory, docId, level = level)
+                    
+                    refreshFolder(context, parentPath)
+                    withContext(Dispatchers.Main) {
+                        onSuccess(newItem)
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Creation failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun generateUniqueName(baseName: String, isDirectory: Boolean, parentPath: String): String {
+        val siblings = folderCache[parentPath] ?: emptyList()
+        val (base, ext) = if (isDirectory) baseName to "" else splitFileName(baseName)
+        
+        if (siblings.none { it.name == baseName }) return baseName
+        
+        var i = 1
+        while (true) {
+            val candidate = "$base $i$ext"
+            if (siblings.none { it.name == candidate }) return candidate
+            i++
+        }
+    }
+
+    private fun manualCopyFile(context: Context, sourceUri: Uri, parentUri: Uri, newName: String) {
+        val resolver = context.contentResolver
+        val mimeType = resolver.getType(sourceUri) ?: "application/octet-stream"
+        
+        val newFileUri = DocumentsContract.createDocument(resolver, parentUri, mimeType, newName) ?: throw Exception("Failed to create new file for copy")
+        
+        resolver.openInputStream(sourceUri)?.use { input ->
+            resolver.openOutputStream(newFileUri)?.use { output ->
+                input.copyTo(output)
             }
         }
     }
@@ -296,8 +436,8 @@ class ProjectState(initialName: String) {
     private suspend fun refreshFolder(context: Context, folderPath: String) {
         val treeUri = Uri.parse(path ?: return)
         val docId = if (folderPath == "root") DocumentsContract.getTreeDocumentId(treeUri) else folderPath
-        val level = findLevel(this, docId)
-        val newChildren = fetchChildren(context, treeUri, docId, level)
+        val level = findLevel(this, folderPath) // Use the folder path to find its level correctly
+        val newChildren = fetchChildren(context, treeUri, docId, level + 1)
         withContext(Dispatchers.Main) {
             folderCache[folderPath] = newChildren
         }

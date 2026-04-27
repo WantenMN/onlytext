@@ -10,7 +10,6 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun ProjectWelcomePage(
-    onCreateFile: () -> Unit,
     onSelectFile: () -> Unit,
     modifier: Modifier = Modifier,
     innerPadding: PaddingValues = PaddingValues(0.dp)
@@ -41,13 +40,6 @@ fun ProjectWelcomePage(
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(48.dp))
-            Button(
-                onClick = onCreateFile,
-                modifier = Modifier.fillMaxWidth(0.7f)
-            ) {
-                Text("Create New File")
-            }
-            Spacer(modifier = Modifier.height(16.dp))
             OutlinedButton(
                 onClick = onSelectFile,
                 modifier = Modifier.fillMaxWidth(0.7f)

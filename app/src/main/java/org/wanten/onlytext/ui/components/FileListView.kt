@@ -2,22 +2,27 @@ package org.wanten.onlytext.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
@@ -27,7 +32,9 @@ data class FileItem(
     val path: String, 
     val level: Int = 0,
     val isExpanded: Boolean = false,
-    val hasChildren: Boolean = isDirectory
+    val hasChildren: Boolean = isDirectory,
+    val size: Long = 0,
+    val lastModified: Long = 0
 )
 
 @Composable
@@ -41,7 +48,7 @@ fun FileListView(
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
-
+    
     LaunchedEffect(scrollState) {
         snapshotFlow { scrollState.firstVisibleItemIndex to scrollState.firstVisibleItemScrollOffset }
             .collect { (index, offset) ->
@@ -78,8 +85,13 @@ fun FileListView(
             items(files, key = { it.path + it.level }) { file ->
                 FileListItem(
                     file = file,
-                    onClick = { onFileClick(file) },
-                    onLongClick = { onFileLongClick(file) }
+                    modifier = Modifier
+                        .pointerInput(file.path) {
+                            detectTapGestures(
+                                onTap = { onFileClick(file) },
+                                onLongPress = { onFileLongClick(file) }
+                            )
+                        }
                 )
             }
         }
@@ -94,7 +106,7 @@ fun FileListView(
                 stickyParents.forEach { parent ->
                     FileListItem(
                         file = parent.copy(isExpanded = true),
-                        onClick = {
+                        modifier = Modifier.clickable {
                             if (onStickyHeaderClick != null) {
                                 onStickyHeaderClick(parent)
                                 // Auto-scroll the LazyColumn to this item to avoid visual jump
@@ -126,15 +138,15 @@ fun FileListView(
 @Composable
 fun FileListItem(
     file: FileItem,
-    onClick: () -> Unit,
-    onLongClick: (() -> Unit)? = null,
+    isHighlighted: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val lineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
-    
+
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .background(if (isHighlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent)
             .drawBehind {
                 val strokeWidth = 1.dp.toPx()
                 // Draw vertical lines for all parent levels
@@ -159,10 +171,6 @@ fun FileListItem(
                     )
                 }
             }
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            )
             .padding(start = (16 + file.level * 12).dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

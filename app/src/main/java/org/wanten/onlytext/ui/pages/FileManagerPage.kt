@@ -44,6 +44,14 @@ fun FileManagerPage(
 
     var selectedFileForMenu by remember { mutableStateOf<FileItem?>(null) }
 
+    val rootDocumentId = remember(project.path) {
+        project.path?.let { 
+            try {
+                DocumentsContract.getTreeDocumentId(Uri.parse(it))
+            } catch (e: Exception) { null }
+        }
+    }
+
     val allDirectories = remember(project.folderCache.size) {
         val dirs = mutableListOf(FileItem("Root", true, "root", level = 0))
         project.folderCache.values.flatten().filter { it.isDirectory }.forEach {
@@ -250,8 +258,32 @@ fun FileManagerPage(
                     onDelete = {
                         project.deleteFile(context, selectedFileForMenu!!, scope)
                     },
+                    onCreateNew = { name, isDir ->
+                        val targetPath = if (selectedFileForMenu!!.isDirectory) {
+                            selectedFileForMenu!!.path
+                        } else {
+                            project.findParentPath(selectedFileForMenu!!.path) ?: "root"
+                        }
+                        
+                        // Auto-expand the parent if it's a directory
+                        if (selectedFileForMenu!!.isDirectory) {
+                            project.expandedFolders = project.expandedFolders + selectedFileForMenu!!.path
+                        }
+
+                        project.createFile(context, targetPath, name, isDir, scope) { newItem ->
+                            if (!isDir) {
+                                onFileSelected(newItem)
+                            }
+                        }
+                    },
                     allDirectories = allDirectories,
-                    currentSiblings = currentSiblings
+                    currentSiblings = currentSiblings,
+                    projectRootPath = rootDocumentId,
+                    actualParentPath = if (selectedFileForMenu!!.isDirectory) {
+                        selectedFileForMenu!!.path
+                    } else {
+                        project.findParentPath(selectedFileForMenu!!.path) ?: "root"
+                    }
                 )
             }
 

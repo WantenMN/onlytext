@@ -39,6 +39,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.wanten.onlytext.ui.components.FileItem
+import org.wanten.onlytext.ui.components.FileListView
 import org.wanten.onlytext.ui.pages.EditorPage
 import org.wanten.onlytext.ui.pages.FileManagerPage
 import org.wanten.onlytext.ui.pages.ProjectWelcomePage
@@ -358,25 +360,20 @@ private fun RenderPageContent(
         }
     }
 
-    fun handleCreateFile() {
-        project.path?.let { path ->
-            val rootUri = Uri.parse(path)
-            try {
-                val rootId = DocumentsContract.getTreeDocumentId(rootUri)
-                val newFileUri = DocumentsContract.createDocument(
-                    context.contentResolver,
-                    DocumentsContract.buildDocumentUriUsingTree(rootUri, rootId),
-                    "text/plain",
-                    "Untitled.txt"
-                )
-                newFileUri?.let {
-                    editor.textFieldValue = TextFieldValue("")
-                    project.activeFilePath = it.toString()
-                    project.activeFileName = it.lastPathSegment ?: "Untitled.txt"
-                    project.folderCache.remove("root")
-                    loadFileContent(context, project, editor, it)
+    fun selectFile(fileItem: FileItem) {
+        if (!fileItem.isDirectory) {
+            val docUri = if (project.type == ProjectType.DIRECTORY) {
+                val treeUri = Uri.parse(project.path)
+                DocumentsContract.buildDocumentUriUsingTree(treeUri, fileItem.path)
+            } else {
+                Uri.parse(fileItem.path)
+            }
+            if (loadFileContent(context, project, editor, docUri)) {
+                scope.launch {
+                    val targetPage = if (actualCol == 0) hPage + 1 else hPage - 1
+                    hPagerState.animateScrollToPage(targetPage)
                 }
-            } catch (e: Exception) { }
+            }
         }
     }
 
@@ -386,20 +383,7 @@ private fun RenderPageContent(
                 project = project,
                 contentPadding = innerPadding,
                 onFileSelected = { fileItem ->
-                    if (!fileItem.isDirectory) {
-                        val docUri = if (project.type == ProjectType.DIRECTORY) {
-                            val treeUri = Uri.parse(project.path)
-                            DocumentsContract.buildDocumentUriUsingTree(treeUri, fileItem.path)
-                        } else {
-                            Uri.parse(fileItem.path)
-                        }
-                        if (loadFileContent(context, project, editor, docUri)) {
-                            scope.launch {
-                                val targetPage = if (actualCol == 0) hPage + 1 else hPage - 1
-                                hPagerState.animateScrollToPage(targetPage)
-                            }
-                        }
-                    }
+                    selectFile(fileItem)
                 },
                 onOpenFolderClick = { openFolderLauncher.launch(null) },
                 onCloseFolderClick = {
@@ -418,7 +402,6 @@ private fun RenderPageContent(
                 )
             } else if (project.activeFilePath == null) {
                 ProjectWelcomePage(
-                    onCreateFile = { handleCreateFile() },
                     onSelectFile = {
                         scope.launch {
                             val targetPage = if (actualCol == 1) hPage - 1 else hPage + 1
