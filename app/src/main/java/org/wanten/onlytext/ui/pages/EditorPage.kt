@@ -13,6 +13,7 @@ import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.EaseIn
 import androidx.compose.animation.core.animateDpAsState
@@ -64,6 +65,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -284,7 +287,7 @@ fun EditorPage(
         val toolbarPadding by animateDpAsState(
             targetValue = if (showToolbar) toolbarHeight else 0.dp,
             label = "toolbar_padding",
-            animationSpec = if (showToolbar) androidx.compose.animation.core.spring() else snap()
+            animationSpec = snap()
         )
 
         LaunchedEffect(imeHeightPx, isImeAnimationRunning) {
@@ -467,19 +470,29 @@ fun EditorPage(
 
             AnimatedVisibility(
                 visible = showToolbar,
-                enter = fadeIn(animationSpec = tween(durationMillis = 1000, easing = EaseIn)),
-                exit = fadeOut(animationSpec = snap()),
+                enter = EnterTransition.None,
+                exit = ExitTransition.None,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .offset {
                         IntOffset(0, -(imeHeightPx - bottomPaddingPx).coerceAtLeast(0))
                     }
             ) {
+                val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(toolbarHeight)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
+                        .background(MaterialTheme.colorScheme.background)
+                        .drawBehind {
+                            drawLine(
+                                color = borderColor,
+                                start = Offset(0f, 0f),
+                                end = Offset(size.width, 0f),
+                                strokeWidth = with(density) { 1.dp.toPx() }
+                            )
+                        }
+                        .padding(2.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -488,7 +501,7 @@ fun EditorPage(
                 ) {
                     IconButton(
                         onClick = { editorView?.onTextContextMenuItem(android.R.id.undo) },
-                        modifier = Modifier.size(toolbarHeight)
+                        modifier = Modifier.size(toolbarHeight - 4.dp)
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.Undo,
@@ -498,7 +511,7 @@ fun EditorPage(
                     }
                     IconButton(
                         onClick = { editorView?.onTextContextMenuItem(android.R.id.redo) },
-                        modifier = Modifier.size(toolbarHeight)
+                        modifier = Modifier.size(toolbarHeight - 4.dp)
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.Redo,
@@ -511,7 +524,7 @@ fun EditorPage(
 
                     IconButton(
                         onClick = { onValueChange(textFieldValue.copy(selection = TextRange(0))) },
-                        modifier = Modifier.size(toolbarHeight)
+                        modifier = Modifier.size(toolbarHeight - 4.dp)
                     ) {
                         Icon(
                             Icons.Default.VerticalAlignTop,
@@ -521,7 +534,7 @@ fun EditorPage(
                     }
                     IconButton(
                         onClick = { onValueChange(textFieldValue.copy(selection = TextRange(textFieldValue.text.length))) },
-                        modifier = Modifier.size(toolbarHeight)
+                        modifier = Modifier.size(toolbarHeight - 4.dp)
                     ) {
                         Icon(
                             Icons.Default.VerticalAlignBottom,
@@ -534,7 +547,7 @@ fun EditorPage(
                     IconButton(
                         onClick = { if (!isSaved) onSave() },
                         enabled = !isSaved,
-                        modifier = Modifier.size(toolbarHeight),
+                        modifier = Modifier.size(toolbarHeight - 4.dp),
                         colors = IconButtonDefaults.iconButtonColors(
                             contentColor = if (isSaved) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary,
                             disabledContentColor = MaterialTheme.colorScheme.outline
